@@ -10,17 +10,42 @@ import re
 import collections
 #from matplotlib import pyplot as plt
 
-def get_image_cropBox(bwimg, padding=2):
+def get_image_cropBox(bwimg, padding=20):
   rows, cols = bwimg.shape
 
-  non_empty_columns = np.where(bwimg.max(axis=0) > 0)[0]
-  non_empty_rows = np.where(bwimg.max(axis=1) > 0)[0]
+  non_empty_columns = np.where( np.sum(bwimg, axis=0, dtype=np.uint32) > 2000 )[0]
+  non_empty_rows    = np.where( np.sum(bwimg, axis=1, dtype=np.uint32) > 2000 )[0]
+
+#  print test
+
+#  print test[156],test[157],test[158]
+#  print test[742],test[743],test[744]
+
+
+#  non_empty_columns = np.where(bwimg.max(axis=0) > 0)[0]
+#  non_empty_rows = np.where(bwimg.max(axis=1) > 0)[0]
+  
+#  print non_empty_columns
+#  print non_empty_rows
+  
+#  cv2.imshow("dilate", cv2.resize(bwimg, None, fx=0.5,fy=0.5, interpolation=cv2.INTER_NEAREST));
+#  cv2.waitKey(25);
+  
+  
   
   #x1:x2,y1:y2
-  cropBox = ( min(non_empty_rows) - padding,
-            min(max(non_empty_rows) + padding, rows),
-            min(non_empty_columns)  - padding,
-            min(max(non_empty_columns) + padding, cols))
+  
+  if (len(non_empty_rows) == 0) or (len(non_empty_columns) == 0):
+    fd = open("%s.state" % sys.argv[1], "w");
+    fd.write("empty nohlines\n");
+    fd.close();
+    sys.exit(0);
+  
+  cropBox = ( max(0, min(non_empty_rows) - padding),
+              min(max(non_empty_rows) + padding, rows),
+              max(0, min(non_empty_columns)  - padding),
+              min(max(non_empty_columns) + padding, cols))
+
   print "Crop box: (%d,%d) - (%d,%d)" %(cropBox[0], cropBox[2], cropBox[1], cropBox[3]);
   return cropBox
 
@@ -35,10 +60,13 @@ def get_page_rotate_angle(bw_img, min_line):
 
   #crop
   cropBox = get_image_cropBox(dilate);
+  
+
+
   dilate =  dilate[cropBox[0]:cropBox[1]+1, cropBox[2]:cropBox[3]+1]
 
   #lines= cv2.HoughLines(edges,1,np.pi/180,200);
-  lines= cv2.HoughLinesP(image=dilate,rho=1,theta=np.pi/1440,threshold=600,minLineLength=min_line,maxLineGap=5);
+  lines= cv2.HoughLinesP(image=dilate,rho=1,theta=np.pi/1440,threshold=600,minLineLength=min_line,maxLineGap=7);
   if lines is None:
     print "get_angle: Looks like empty/invalid page -- no long lines here"
     return [ 0.0, [], cropBox ];
@@ -140,14 +168,16 @@ def im_norm_strokew_find_mu(im0, im1, tau_0, tau_1, targetT):
         return [imT, cx, cy, mu2x]
 
 
-def find_qr(bw, minX, maxX, minY, maxY):
-  pw = 18
-  ph = 18
+def find_qr(bw, minX, maxX, minY, maxY, ps):
+  im_height, im_width = bw.shape
+  pw = ps
+  ph = ps
+
   # find coords which can be qr corners
   coordlist = [];
   cgroup = [];
-  for x in range( minX, maxX-3*pw-1, 2):
-    for y in range( minY + 3*ph, maxY , 2):
+  for x in range( max( minX, 3*pw), min( im_width - 3*pw-1, maxX), 2):
+    for y in range( max( minY, 3*ph), min( maxY, im_height - 3*ph-1) , 2):
       w1  = 2*int(bw[y,x]) #black
       w1 += 0.5* (int(bw[y+ph,x]) + int(bw[y-ph,x]) + int(bw[y,x+pw]) + int(bw[y,x-pw])) #black
 
@@ -155,6 +185,7 @@ def find_qr(bw, minX, maxX, minY, maxY):
       w1 += 0.5 * (int(255-bw[y+2*ph, x+2*pw]) + int(255-bw[y-2*ph, x+2*pw]) + int(255-bw[y+2*ph,x-2*pw]) + int(255-bw[y-2*ph,x-2*pw])); #white
 
       w1 += int(bw[y+3*ph, x+3*pw]) + int(bw[y+3*ph, x-3*pw]) + int(bw[y-3*ph, x+3*pw]) + int(bw[y-3*ph,x-3*pw]); #black
+
       #white
       if (y-4*ph > 0):
         if (x+4*pw < im_width):
@@ -164,17 +195,22 @@ def find_qr(bw, minX, maxX, minY, maxY):
         w1 += 255-int(bw[y-4*ph,x-4*pw])
       else:
         w1 += 255 + 255;
-      
-      if (x+4*pw < im_width): 
-        w1 += 255-int(bw[y+4*pw,x+4*ph]) 
+
+      if (y+4*pw < im_height):
+        if (x+4*pw < im_width): 
+          w1 += 255-int(bw[y+4*pw,x+4*ph]) 
+        else:
+          w1 += 255;
+  
+        w1 += 255 - int(bw[y+4*ph,x-4*pw])
       else:
-        w1 += 255;
+          w1 += 255 + 255;
       
-      w1 += 255 - int(bw[y+4*ph,x-4*pw])
 
       if (w1 > 3550):
-#        print "%s QR anchor: %d %d" % (sys.argv[1],x,y)
+        print "%s %d QR anchor: %d %d  %d" % (sys.argv[1],ps,x,y,w1)
         coordlist.append( (x,y) );
+
 
   #check we have 3 corners
   for pt in coordlist:
@@ -198,33 +234,195 @@ def find_qr(bw, minX, maxX, minY, maxY):
 #  print len(cgroup), cgroup
   
   if (len(cgroup) >=3 ): 
+    nnmax = 0
+    rgroup = [];
     for idx,grp in enumerate(cgroup):
       x0 = 0;
       y0 = 0;
       nn = 0;
+      nnmax = max ( nnmax, len(grp) ); #sorted
       for pt in grp:
         x0 += pt[0];
         y0 += pt[1];
         nn+=1;
-      cgroup[idx] = ( int(x0/nn), int(y0/nn) );
-#      print cgroup
+        
+      if (nn > nnmax/2.5) and (nnmax > 7): 
+        print "cgroup: (%d, %d) %d" % ( int(x0/nn), int(y0/nn), nn )
+        rgroup.append( ( int(x0/nn), int(y0/nn), nn ) );
+
+    print rgroup
+    return rgroup
   else:
     print "QR: failed to group corners"
     print "corner-groups: ", cgroup
     return [];
 
 
-  return cgroup
+def get_qr_cgroup(bw, im_width, im_height):
+  rotate = 0;
+
+  print "qr: ", im_width, im_height
+  if (im_width >=2000):
+    cgroup = find_qr(bw, int(im_width/3), im_width, 0, int(im_height/3),27);
+    print "cgroup@27: %d" % len(cgroup)
+    if (len(cgroup)>=3):
+      return (cgroup,rotate);
+      
+    cgroup = find_qr(bw, 0, int(im_width*2/3), int(im_height*2/3), im_height, 27);
+    print "cgroup@27, rotated: %d" % len(cgroup)
+    if (len(cgroup)>=3):
+      rotate = 180
+      return ( cgroup, rotate );
+
+  elif (im_width >= 1700):
+    cgroup = find_qr(bw, int(im_width/3), im_width, 0, int(im_height/3),22);
+    print "cgroup@22: %d" % len(cgroup)
+    if (len(cgroup)>=3):
+      return (cgroup,rotate);
+      
+    cgroup = find_qr(bw, int(im_width/3), im_width, 0, int(im_height/3),18);
+    print "cgroup@18: %d" % len(cgroup)
+    if (len(cgroup)>=3):
+      return (cgroup,rotate);
+    
+  elif (im_width >= 1480):
+    cgroup = find_qr(bw, int(im_width/3), im_width, 0, int(im_height/3),18);
+    print "cgroup@18: %d" % len(cgroup)
+    if (len(cgroup)>=3) and (cgroup[0][2]>10):
+      return (cgroup,rotate);
+     
+    cgroup = find_qr(bw, 0, int(im_width*2/3), int(im_height*2/3), im_height, 18);
+    print "cgroup@18, rotated: %d" % len(cgroup)
+    if (len(cgroup)>=3):
+      rotate = 180
+      return ( cgroup, rotate );
+#    if (len(cgroup1[0]) > len(cgroup2[0])) and (len(cgroup1) >= 3):
+#      return (cgroup1,rotate);
+      
+#    if (len(cgroup1[0]) < len(cgroup2[0])) and (len(cgroup2) >= 3):
+#      rotate=180;
+#      return (cgroup2,rotate);
+
+
+  elif (im_width > 900):
+    cgroup = find_qr(bw, int(im_width/4), im_width, 0, int(im_height/3),13);
+    print "cgroup@13: %d" % len(cgroup);
+    if (len(cgroup)>=3):
+      return ( cgroup, rotate );
+
+  else:
+    cgroup = find_qr(bw, int(im_width/4), im_width, 0, int(im_height/3),10);
+    print "cgroup@10: %d" % len(cgroup);
+    if (len(cgroup)>=3):
+      return ( cgroup, rotate );
+  
+  
+  
+#  cv2.imshow("hough", bw);
+#  cv2.waitKey(0)
+  
+  if (len(cgroup)<3):
+    cgroup = find_qr(bw, int(im_width/4), im_width, 0, int(im_height/3),14);
+    print "cgroup@14: %d" % len(cgroup);
+
+  if (len(cgroup)<3):
+    cgroup = find_qr(bw, int(im_width/4), im_width, 0, int(im_height/3),12);
+    print "cgroup@9: %d" % len(cgroup);
+
+  if (len(cgroup)<3):
+    cgroup = find_qr(bw, int(im_width/4), im_width, 0, int(im_height/3),9);
+    print "cgroup@9: %d" % len(cgroup);
+   
+
+  return ( cgroup, rotate )
+
+def binarize_qr(img, sz):
+  h, w = img.shape
+
+  qri = np.zeros([sz,sz], np.uint8);
+  
+  idx = float(sz)
+  edge = 180
+  dw = w / idx;
+  dh = h / idx;
+  for dy in range(0,sz):
+    s = '';
+    for dx in range(0,sz):
+      x = int( round( (0.5 + dx*1.0)*dw ));
+      y = int( round( (0.5 + dy*1.0)*dh ));
+
+      c = 0;
+      for xx in range(x-2, x + 3): #5
+        for yy in range(y-2, y + 3): #4 
+          if (img[yy,xx] > edge): c+=1;
+
+      if (c>10):
+        s += '0';
+        qri[dy,dx] = 255;
+      else:
+        s += '1';
+        qri[dy,dx] = 0;
+
+#      print "(%d,%d) => %d %d" %( dx,dy, bw2[y,x],c)
+#      bw2[y,x] = 127;
+    print(s);
+
+  #fix fixable, break on rotate
+  if sz==25: #y,x
+    qri[0,0] = 0;
+    qri[1,0] = 0;
+    qri[2,0] = 0;
+    qri[3,0] = 0;
+    qri[4,0] = 0;
+    qri[5,0] = 0;
+    qri[6,0] = 0;
+
+    qri[0,24] = 0;
+    qri[1,24] = 0;
+    qri[2,24] = 0;
+    qri[3,24] = 0;
+    qri[4,24] = 0;
+    qri[5,24] = 0;
+    qri[6,24] = 0;
+  
+    qri[17,17] = 255;
+    qri[17,18] = 255;
+    qri[17,19] = 255;
+
+    qri[18,17] = 255;
+    qri[18,18] = 0;
+    qri[18,19] = 255;
+
+    qri[19,17] = 255;
+    qri[19,18] = 255;
+    qri[19,19] = 255;
+
+    qri[18,0] = 0;
+    qri[19,0] = 0;
+    qri[20,0] = 0;
+    qri[21,0] = 0;
+    qri[22,0] = 0;
+    qri[23,0] = 0;
+    qri[24,0] = 0;
+
+  return qri  
+
 
 def get_qrdata(bw_img, filename):
   if os.path.isfile("%s.qrdata" % filename):
     print("read qrdata cache from: %s.qrdata" % filename)
     fd = open("%s.qrdata" % filename, "r");
-    qrcode = fd.readline().strip();
+    qrdata = fd.readline().strip().split(' ');
     fd.close();
-    # valid only if not empty
-    if qrcode:
-      return qrcode;
+
+#    print qrdata, len(qrdata), len(qrdata[0])
+
+    # valid only if not empty, support no rotate data
+    if (len(qrdata) == 2) and ( len(qrdata[0]) >=7):
+      return (qrdata[0], int(qrdata[1]))
+      
+    if (len(qrdata) == 1) and ( len(qrdata[0]) >=7):
+      return (qrdata[0], 0 )
 
   #prepare image
 
@@ -234,15 +432,19 @@ def get_qrdata(bw_img, filename):
   bw = cv2.dilate(bw, cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3)), 1);
   bw = cv2.erode(bw, cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3)), 1);
 
+#  cv2.imshow("hough", bw);
+#  cv2.waitKey(0)
+
   #find qrcode probable anchors
-  cgroup = find_qr(bw, int(im_width/2), im_width, 0, int(im_height/4));
+  im_height, im_width = bw.shape
+  (cgroup, rotate) = get_qr_cgroup(bw, im_width, im_height);
 
   if len(cgroup) == 0: 
-    return 'no-qr-found';
+    return ('no-qr-found',0);
 
 #  print cgroup;
 
-  ps = 20;
+  ps = im_width/80;
 
   lx = cgroup[0][0];
   rx = cgroup[0][0];
@@ -269,72 +471,54 @@ def get_qrdata(bw_img, filename):
 #  cv2.imshow("hough", bw2);
 #  cv2.waitKey(0)
 
-  rows, cols = bw2.shape
+#  rows, cols = bw2.shape
 
-  non_empty_columns = np.where(bw2.min(axis=0) < 128)[0]
-  non_empty_rows = np.where(bw2.min(axis=1) < 128)[0]
+#  non_empty_columns = np.where(bw2.min(axis=0) < 128)[0]
+#  non_empty_rows = np.where(bw2.min(axis=1) < 128)[0]
   
   #x1:x2,y1:y2
-  cropBox =(max(min(non_empty_rows),0),
-            min(max(non_empty_rows), rows),
-            max(min(non_empty_columns), 0),
-            min(max(non_empty_columns), cols))
+#  cropBox =(max(min(non_empty_rows),0),
+#            min(max(non_empty_rows), rows),
+#            max(min(non_empty_columns), 0),
+#            min(max(non_empty_columns), cols))
 #  print "Crop box: (%d,%d) - (%d,%d)" %(cropBox[0], cropBox[2], cropBox[1], cropBox[3]);
 
  
-#  cv2.line( img, (lx,ty), (rx,ty), (0,0,255), 2);
-#  cv2.line( img, (lx,by), (rx,by), (0,0,255),2);
-#  cv2.line( img, (lx,ty), (lx,by), (0,0,255),2);
-#  cv2.line( img, (rx,ty), (rx,by), (0,0,255),2);
+  qrfilename = "%s_qr.png" % (tmpbase);
+  cv2.imwrite(qrfilename, bw2 );
+#  cv2.imwrite(qrfilename, bw2[ cropBox[0]:cropBox[1]+1, cropBox[2]+1:cropBox[3]+1 ]);
 
-
-  qrfilename = "%s_qr.png" % (sys.argv[2]);
-  cv2.imwrite(qrfilename, bw2[ cropBox[0]:cropBox[1]+1, cropBox[2]+1:cropBox[3]+1 ]);
-
-  w = cropBox[3]-cropBox[2];
-  h = cropBox[1]-cropBox[0]+1;
-
-  qri = np.zeros([21,21], np.uint8);
-  
-  idx = 21.0
-  edge = 180
-  dw = w / idx;
-  dh = h / idx;
-  for dy in range(0,21):
-    s = '';
-    for dx in range(0,21):
-      x = int( cropBox[2] + round( (0.5 + dx*1.0)*dw ));
-      y = int( cropBox[0] + round( (0.5 + dy*1.0)*dh ));
-
-      c = 0;
-      for xx in range(x-2, x + 2):
-        for yy in range(y-2, y + 2): 
-          if (bw2[yy,xx] > edge): c+=1;
-
-      if (c>12):
-        s += '0';
-        qri[dy,dx] = 255;
-      else:
-        s += '1';
-        qri[dy,dx] = 0;
-
-#      print "(%d,%d) => %d %d" %( dx,dy, bw2[y,x],c)
-      
-      bw2[y,x] = 127;
-      
-#    print(s);
-    
+#  cv2.imshow("hough", bw2[ cropBox[0]:cropBox[1]+1, cropBox[2]+1:cropBox[3]+1 ]);
+#  cv2.waitKey(0)
 
   qrcode = subprocess.Popen(['/usr/bin/zbarimg', '-q', qrfilename], stdout=subprocess.PIPE).communicate()[0]
   qrcode = qrcode.strip().replace('QR-Code:','').strip();
 
-  qrfilename = "%s_qr2.png" % (sys.argv[2]);
-  cv2.imwrite(qrfilename, qri);
 
   if qrcode == '':
     #try2
-    cnv = subprocess.Popen(['/usr/bin/convert', qrfilename, '-scale', '1000%', 'qr2_tmp.png' ], stdout=subprocess.PIPE).communicate()[0]
-    qrcode = subprocess.Popen(['/usr/bin/zbarimg', '-q', 'qr2_tmp.png' ], stdout=subprocess.PIPE).communicate()[0]
+#    qri = binarize_qr(bw2[ cropBox[0]:cropBox[1]+1, cropBox[2]+1:cropBox[3]+1 ], 21);
+    qri = binarize_qr(bw2, 21);
+
+    qrfilename = "%s_qr21.png" % (tmpbase);
+    qrb_file   = "%s_qr21b.png" % (tmpbase);
+    cv2.imwrite(qrfilename, qri);
+    
+    cnv = subprocess.Popen(['/usr/bin/convert', qrfilename, '-scale', '1000%', qrb_file ], stdout=subprocess.PIPE).communicate()[0]
+    qrcode = subprocess.Popen(['/usr/bin/zbarimg', '-q', qrb_file ], stdout=subprocess.PIPE).communicate()[0]
+    qrcode = qrcode.strip().replace('QR-Code:','').strip();
+
+  if qrcode == '':
+    #try3
+#    qri = binarize_qr(bw2[ cropBox[0]:cropBox[1]+1, cropBox[2]+1:cropBox[3]+1 ], 25);
+    qri = binarize_qr(bw2, 25);
+
+    qrfilename = "%s_qr25.png" % (tmpbase);
+    qrb_file   = "%s_qr25b.png" % (tmpbase);
+    cv2.imwrite(qrfilename, qri);
+    
+    cnv = subprocess.Popen(['/usr/bin/convert', qrfilename, '-scale', '1000%', qrb_file ], stdout=subprocess.PIPE).communicate()[0]
+    qrcode = subprocess.Popen(['/usr/bin/zbarimg', '-q', qrb_file ], stdout=subprocess.PIPE).communicate()[0]
     qrcode = qrcode.strip().replace('QR-Code:','').strip();
     
   print qrcode
@@ -342,66 +526,322 @@ def get_qrdata(bw_img, filename):
   print("write qrdata cache to: %s.qrdata" % filename)
   
   fd = open("%s.qrdata" % filename, "w");
-  fd.write("%s\n" % qrcode);
+  fd.write("%s %d\n" % (qrcode, rotate));
   fd.close();
 
 #  cv2.imshow("hough", bw2[cropBox[0]:cropBox[1]+1, cropBox[2]+1:cropBox[3]+1]);
 #  cv2.waitKey(0)
 
-  return qrcode
+  return (qrcode, rotate)
 
 # https://stackoverflow.com/questions/7446126/opencv-2d-line-intersection-helper-function
-def check_lcross( o1, p1, o2, p2 ):
-    x = o2 - o1;
-    d1 = p1 - o1;
-    d2 = p2 - o2;
+def check_lcross( ln1, ln2 ):
+    o1x = ln1[0];
+    o1y = ln1[1];
+    p1x = ln1[2];
+    p1y = ln1[3];
 
-    cross = d1[0]*d2[1] - d1[1]*d2[0];
+    o2x = ln2[0];
+    o2y = ln2[1];
+    p2x = ln2[2];
+    p2y = ln2[3];
+    
+    xx = o2x - o1x;
+    xy = o2y - o1y;
+    
+    d1x = p1x - o1x
+    d1y = p1y - o1y
+    d2x = p2x - o2x
+    d2y = p2y - o2y
+    
+#    x = o2 - o1;
+#    d1 = p1 - o1;
+#    d2 = p2 - o2;
+
+#    cross = d1[0]*d2[1] - d1[1]*d2[0];
+    cross = d1y*d2x - d1x*d2y;
     if (abs(cross) < 1e-8):
       return False;
 
-    t1 = (x[0] * d2[1] - x[1] * d2[0])/cross;
+    t1 = (xy * d2x - xx * d2y)/cross;
+    t2 = (xy * d1x - xx * d1y)/cross;
     # r = o1 + d1 * t1; -- intersection point
-    if (t1 >= 0.0) and (t1 <= 1.0):
+    if (t1 >= 0.0) and (t1 <= 1.0) and (t2 >= 0.0) and (t2 <= 1.0):
       return True;
+
 
     return False;
 
 
 def check_crossing(ebox):
+  imh, imw = ebox.shape;
 
-  gimg = cv2.cvtColor( ebox, cv2.COLOR_GRAY2BGR);
-
-  lines=cv2.HoughLinesP(image=ebox,rho=1,theta=np.pi/360,threshold=15,minLineLength=11,maxLineGap=3);
+  #x-axis projection
+  proj_x = np.sum(ebox, axis=0, dtype=np.uint32);
+  mpx = max(proj_x)*0.7;
   
+  xlist = np.where( proj_x > mpx )[0]
+
+  if (len(xlist) == 0):
+    print " empty: xlist ", xlist
+    return ('empty',0);
+  
+  if (len(xlist)<=2):
+    print " empty: xlist ", xlist
+    return ('unk',0);
+    
+  Lminx = min(xlist);
+  Rmaxx = max(xlist);
+ 
+  x0 = Lminx
+  Lmaxx = x0
+  flag=0
+  for x in xlist:
+    if (x-x0>1):
+      Lmaxx = x0;
+      flag=1
+      break;
+    x0 = x  
+  if flag==0:
+    Lmaxx = x0
+      
+  x0 = Rmaxx
+  Rminx = x0
+  flag=0
+  for x in reversed(xlist):
+    if (x0-x>1):
+      Rminx = x0;
+      flag=1
+      break;
+    x0 = x  
+  if flag==0:
+    Rminx = x0
+
+  #dont remove too much
+  if (Lmaxx-Lminx > 7):
+    Lmaxx = Lminx+7;
+  
+  if (Rmaxx-Rminx > 7):
+    Rminx = Rmaxx-7
+      
+#  print "xlist: ", xlist
+  print "xboundaries: ", (Lminx, Lmaxx, Rminx, Rmaxx);
+
+  proj_y = np.sum(ebox, axis=1, dtype=np.uint32);
+  mpy = max(proj_y)*0.7;
+  
+  ylist = np.where( proj_y > mpy )[0]
+  if (len(ylist) == 0):
+    print " empty: ylist ", ylist
+    return ('empty',0);
+    
+#  if (len(ylist)<2):
+#    print " empty: ylist ", ylist
+#    return 'unk';
+  
+  Tminy = min(ylist);
+  Bmaxy = max(ylist);
+ 
+  y0 = Tminy
+  Tmaxy = y0
+  flag = 0
+  for y in ylist:
+    if (y-y0>1):
+      Tmaxy = y0;
+      flag = 1
+      break;
+    y0 = y
+  if flag==0:
+    Tmaxy = y0
+ 
+  y0 = Bmaxy
+  Bminy = y0
+  flag = 0
+  for y in reversed(ylist):
+    if (y0-y>1):
+      Bminy = y0;
+      flag = 1
+      break;
+    y0 = y  
+  if flag==0:
+    Bminy = y0;
+  
+  #dont remove too much
+  if (Tmaxy-Tminy > 7):
+    Tmaxy = Tminy+7;
+  
+  if (Bmaxy-Bminy > 7):
+    Bminy = Bmaxy-7
+
+#  print "ylist: ", ylist
+  print "yboundaries: ", (Tminy, Tmaxy, Bminy, Bmaxy);
+
+  cropT = Tmaxy+2;
+  cropB = Bminy-2;
+  cropL = Lmaxx+3;
+  cropR = Rminx-2;
+  
+  if (Lmaxx > Rminx): #1vert line
+    if (Lmaxx > 0.5*imw):
+      cropL = 0+2;
+      cropR = Rminx-2;
+    else:
+      cropL = Lmaxx+3;
+      cropR = imw-2;
+
+  if (Tmaxy > Bminy): #1horiz line
+    if (Tmaxy > 0.5*imh): #bottom line
+      cropT = 0+2;
+      cropB = Bminy-2;
+    else:
+      cropT = Tmaxy+2;
+      cropB = imh-2;  
+  
+  #cropbox
+  xebox = ebox[ cropT:cropB, cropL:cropR ];  
+
+  imh, imw = xebox.shape;
+
+  #check pixel count
+  nzc = cv2.countNonZero(xebox);
+  tcc = imh*imw;
+  fill = 100.0*nzc/tcc;
+
+  print " inner: nzc=%d, tcc=%d, fill=%f" %( nzc, tcc, fill);
+
+  if (nzc <= tcc*0.020):
+    return ('empty', fill);
+
+  if (nzc >= tcc*0.55):
+    return ('fill', fill);
+
+#  cv2.imshow("houghlp", cv2.resize(xebox, None, fx=7.0,fy=7.0, interpolation=cv2.INTER_NEAREST));
+#  cv2.waitKey(0);
+
+  gimg = cv2.cvtColor( xebox, cv2.COLOR_GRAY2BGR);
+
+  # find lines
+#  lines=cv2.HoughLinesP(image=xebox,rho=1,theta=np.pi/360,threshold=7,minLineLength=8,maxLineGap=3);
+  lines=cv2.HoughLinesP(image=xebox,rho=1,theta=np.pi/360,threshold=10,minLineLength=8,maxLineGap=4);
+
+  if lines is None:
+    print " xlines: 0" 
+    if (nzc >= tcc*0.398):
+      return ('fill',fill);
+    return ('empty', fill);
+
+  print " xlines: %d" % len(lines[0]);
+
   have45 = 0;
   have135 = 0;
-  for (x1,y1,x2,y2) in lines[0]:
-    ang = np.rad2deg( np.arctan2( (x2-x1), (y2-y1) ));
-    print ang, x1,y1, x2,y2;
+  
+  lines0 = [];
+  lines45 = [];
+  lines90 = [];
+  lines135 = [];
+
+  crosses = 0;
+  checks = 0;
+  for i in range (0, len(lines[0])):
+    ln1 = lines[0][i]
+    have_cross = 0;
+    for j in range( i+1, len(lines[0])):
+      ln2 = lines[0][j];
+      checks = checks+1;
+      if check_lcross( ln1, ln2 ):
+        crosses = crosses+1;
+        have_cross = 1;
+
+    if (have_cross == 1):
+      cv2.line( gimg, (ln1[0],ln1[1]), (ln1[2],ln1[3]), (0,255,0), 1);
+    else:
+      cv2.line( gimg, (ln1[0],ln1[1]), (ln1[2],ln1[3]), (255,0,0), 1);
+
+  print " checks: %d, crosses: %d" % (checks,crosses);
+
+  if (checks == 0):
+    return ('empty', fill);
+
+  if (len(lines[0])>=12) and (fill >= 0.35):
+    return ('fill', fill);
+
+  if crosses * 2.5 >= checks:
+    return ('cross', fill);
+
+  if (nzc >= tcc*0.398):
+    return ('fill', fill);
+
+  cv2.imshow("houghlp", cv2.resize(gimg, None, fx=7.0,fy=7.0, interpolation=cv2.INTER_NEAREST));
+  cv2.waitKey(0);
+
+#    ang = np.rad2deg( np.arctan2( (x2-x1), (y2-y1) ));
+#    print ang, x1,y1, x2,y2;
 
     #remove fantom lines from box
-    if (ang > -10) and (ang < 10): continue;
-    if (ang > 80) and (ang < 100): continue;
-    if (ang > 175) and (ang < 185): continue;
-    
-    if (ang > 22) and (ang <80): have45+=1;
-    if (ang > 100) and (ang < 175): have135+=1;
-        
-    cv2.line( gimg, (x1,y1), (x2,y2), (0,0,255), 1);
+#    if (ang > -10) and (ang < 10): #vert
+#      x = (x1+x2)/2.0;
+#      if (Lminx <= x) and (x >= Lmaxx): #remove
+#        continue;
+#      if (Rminx <= x) and (x >= Rmaxx): #remove
+#        continue;
+#      lines0.append( (x1,y1,x2,y2) );
+#      continue;
+#    if (ang > 80) and (ang < 100):
+#      lines90.append( (x1,y1,x2,y2) );
+#      continue;
+#    if (ang > 175) and (ang < 185): 
+#      x = (x1+x2)/2.0;
+#      if (Lminx <= x) and (x >= Lmaxx): #remove
+#        continue;
+#      if (Rminx <= x) and (x >= Rmaxx): #remove
+#        continue;
+#      lines0.append( (x1,y1,x2,y2) );
+#      continue;
 
-  if (have135 and have45):
-    return True;
+
+#    cv2.line( gimg, (x1,y1), (x2,y2), (0,0,255), 1);
+
+    
+#    if (ang > 10) and (ang <79): 
+#      have45+=1;
+#      lines45.append( (x1,y1,x2,y2) );
+#    if (ang > 103) and (ang < 175): 
+#      have135+=1;
+#      lines135.append( (x1,y1,x2,y2) );
+
+#  for (x1,y1,x2,y2) in lines0:
+#    x = (x1+x2)/2;
+#    if (LminX <= x) and (x >= LmaxX):
+#      cv2.line( gimg, (x1,y1), (x2,y2), (255,0,0), 1);
+#    if (RminX <= x) and (x >= RmaxX):
+#      cv2.line( gimg, (x1,y1), (x2,y2), (255,0,0), 1);
+    
+
+
+  
+  print lines0
+
 
 #  cv2.imshow("houghlp", cv2.resize(gimg, None, fx=7.0,fy=7.0, interpolation=cv2.INTER_NEAREST));
 #  cv2.waitKey(0);
 
+
+#  if (have135 and have45):
+#    return 'cross';
+#
+#  if not have135 and not have45:
+#    return 'empty';
+    
+
+
+
 #  print lines;
-  return False;
+  return ('unk',fill);
+
   
 
   
-def process_score(topimg):
+def process_score(topimg, topw):
   im_height, im_width, im_channels = topimg.shape
   print "Score_img: %d x %d (%d chan)" % (im_width, im_height, im_channels)
 
@@ -409,7 +849,7 @@ def process_score(topimg):
   c_gray = cv2.cvtColor( topimg, cv2.COLOR_BGR2GRAY);
 
 #  ret, c_thresh = cv2.threshold( c_gray, 0, 255, cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)
-  c_thresh = cv2.adaptiveThreshold( c_gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV,17,4)
+  c_thresh = cv2.adaptiveThreshold( c_gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV,71,43)
 
   c_thresh = cv2.dilate(c_thresh, cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3)), 1);
   c_thresh = cv2.erode(c_thresh, cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3)), 1);
@@ -421,11 +861,114 @@ def process_score(topimg):
 
 #  print "otsu thresh: %d" % (ret)
 
+  # pass1: try h/v projection for crop
+  proj_x = np.sum(c_thresh, axis=0, dtype=np.uint32);
+  mpx = max(proj_x)*0.7;
+  
+  xlist = np.where( proj_x > mpx )[0]
+  print "p1: xlist: ",mpx/255,xlist
+  
+  proj_y = np.sum(c_thresh, axis=1, dtype=np.uint32);
+  mpy = max(proj_y)*0.7;
+  
+  ylist = np.where( proj_y > mpy )[0]
+  print "p1: ylist: ", mpy/255,ylist
+  
+  maxY = max(ylist)-9;
+  maxX = max(xlist)-2;
+
+  #do not crop too much
+  if (maxX < im_width*0.8):
+    maxX = im_width-1
+  if (maxY < im_height*0.8):
+    maxY = im_height-1
+
+  c_thresh = c_thresh[ 0:maxY, 0:maxX ]  
+  im_width = maxX
+  im_height = maxY
+  print "p1: crop to: ", im_width,im_height
+
+#  cv2.imshow("hough", cv2.resize(c_thresh, None, fx=2.0,fy=2.0, interpolation=cv2.INTER_NEAREST));
+#  cv2.waitKey(0);
+
+  #pass2: get grid maybe
+  nomask = 0;
+  
+  proj_x = np.sum(c_thresh, axis=0, dtype=np.uint32);
+  mpx = max(proj_x)*0.8;
+  
+  xlist = np.where( proj_x > mpx )[0]
+  print "p2: xlist: ", mpx/255, xlist
+  
+  proj_y = np.sum(c_thresh, axis=1, dtype=np.uint32);
+#  mpy = max(proj_y)*0.7;
+  mpy = min(im_width*255*0.40, max(proj_y)*0.7);
+  
+  ylist = np.where( proj_y > mpy )[0]
+  print "p2: ylist: ", mpy/255, ylist
+  
+  minY = min(ylist)-1;
+  maxY = max(ylist)+1;
+  
+  minX = min(xlist)-1;
+  maxX = max(xlist)+1;
+
+  if minX>0.2*im_width:
+    minX = 0;
+    nomask = 1;
+  if maxX < 0.8*im_width:
+    maxX = im_width-1;
+    nomask = 1;
+  if minY>0.2*im_height:
+    minY = 0;
+    nomask = 1;
+  if maxY < 0.8*im_height:
+    maxY = im_height-1;
+    nomask = 1;
+
+  cv2.imshow("hough", cv2.resize(c_thresh[minY:maxY, minX:maxX], None, fx=2.0,fy=2.0, interpolation=cv2.INTER_NEAREST));
+  cv2.waitKey(0);
+
+  #do not crop too much
+  if (maxX < im_width*0.8):
+    maxX = im_width-1
+  if (maxY < im_height*0.8):
+    maxY = im_height-1
+
+  c_thresh = c_thresh[ minY:maxY, minX:maxX ]  
+  im_width = maxX-minX+1
+  im_height = maxY-minY+1
+
+  print "p2: crop to: ", im_width,im_height
+
+
+  #mask
+  if nomask==0:
+    w = (im_width-3)/15.0;
+    for n in range (1,16,2):
+      x0 = int( w*n )+6;
+      x1 = int( w*(n+1))-3;
+      for x in range(x0,x1):
+        cv2.line(c_thresh,(x,0),(x,im_height-1),(0,0,0),2)
+
+    h = (im_height-3)/7.0;
+    for n in range (1,8,2):
+      y0 = int( h*n )+6;
+      y1 = int( h*(n+1))-3;
+      for y in range(y0,y1):
+        cv2.line(c_thresh,(0,y),(im_width-1, y),(0,0,0),2)
+
+
   c_thresh_orig = c_thresh.copy();
   c_thresh_copy = cv2.cvtColor(c_thresh,cv2.COLOR_GRAY2BGR);
 
+
+
+  cv2.imshow("hough", cv2.resize(c_thresh_copy, None, fx=2.0,fy=2.0, interpolation=cv2.INTER_NEAREST));
+  cv2.waitKey(0);
+
+
   #get contours (of rect)    
-  print c_thresh.shape
   (contours,_) = cv2.findContours(c_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE, (1,1) );
     
   print "contour count: %d" % len(contours)
@@ -434,18 +977,24 @@ def process_score(topimg):
   # copy back
   c_thresh = c_thresh_orig.copy();
 
+  w30 = int(topw/31.6)
+  w28 = int(topw/33.9)
+  w65 = int(topw/14.61)
+  w80 = int(topw/11.9)
+  w400= int(topw/4)
+
   # pass1: remove big rects
   for cnt in contours:
-    approx = cv2.approxPolyDP(cv2.convexHull(cnt, returnPoints=True), 1.5, True);
+    approx = cv2.approxPolyDP(cv2.convexHull(cnt, returnPoints=True), 2, True);
     brect  = cv2.boundingRect(approx);
     
-    if ( (brect[2] > 65) or (brect[3] > 80) ):
+    if ( (brect[2] > w65) or (brect[3] > w80) ) and (brect[3] < w400):
       cv2.fillPoly(c_thresh, [ approx ], 0);
 
 #    if ( (brect[2] < 20) or (brect[3] < 20) ):
 #      cv2.fillPoly(c_thresh, [ cnt ], 0);
 
-#  cv2.imshow("hough", cv2.resize(c_thresh, None, fx=2.0,fy=2.0, interpolation=cv2.INTER_NEAREST));
+#  cv2.imshow("hough", cv2.resize(c_thresh, None, fx=1.0,fy=1.0, interpolation=cv2.INTER_NEAREST));
 #  cv2.waitKey(0);
 
   # pass2
@@ -455,6 +1004,7 @@ def process_score(topimg):
   contours = sorted(contours, key = cv2.contourArea, reverse = True);
 
   boxes = [];
+
 
   for cnt in contours:
 #    approx = cv2.approxPolyDP(cnt, 10, True);
@@ -467,25 +1017,17 @@ def process_score(topimg):
 #    print (area*2), (peri*peri/16.0), brect
 
 
-    if (16*area*3.5 > peri*peri) and (len(approx)<=9) and (brect[2] > 30) and (brect[2] < 65) and (brect[3] > 30) and (brect[3] < 80):
+    if (16*area*3.5 > peri*peri) and (len(approx)<=9) and (brect[2] > w28) and (brect[2] < w65) and (brect[3] > w28) and (brect[3] < w80):
       #check box empty
       lw = 4;
+
+      (celltype, fill) = check_crossing(c_thresh_orig[ brect[1]:brect[1]+brect[3], brect[0]:brect[0]+brect[2] ]);
+      
       ebox = c_thresh_orig[ brect[1]+lw:brect[1]+brect[3]-lw, brect[0]+lw:brect[0]+brect[2]-lw ];
       
-      celltype = 'unk';
-      nzc = cv2.countNonZero(ebox);
-      tcc = (brect[3]-2*lw)*(brect[2]-2*lw);
-
-      if nzc <= tcc*0.05:
-        celltype = 'empty';
-      elif nzc > tcc*0.55:
-        celltype = 'fill';
-      elif check_crossing(ebox):
-        celltype = 'cross';  #check we have crossing
-        
-      print "cell (%d,%d) nzc: %d tcc: %d fill: %f type: %s" %( brect[0], brect[1], nzc, tcc, (100.0*nzc/tcc), celltype)
+      print "cell (%d,%d) fill: %f type: %s" %( brect[0], brect[1], fill, celltype)
       
-      boxes.append( [ celltype, brect ] );
+      boxes.append( [ celltype, fill, brect ] );
 
       if celltype != 'unk': continue;
 
@@ -494,27 +1036,31 @@ def process_score(topimg):
 #
       cv2.drawContours(c_thresh_copy, [ approx ], -1, (0,255,0),1)
 
-      cv2.imshow("sym", cv2.resize(c_thresh_copy[ brect[1]+lw:brect[1]+brect[3]-lw, brect[0]+lw:brect[0]+brect[2]-lw ], None, fx=7.0,fy=7.0, interpolation=cv2.INTER_NEAREST));
-      cv2.waitKey(0);
-      
 
+      cv2.imshow("sym", cv2.resize(c_thresh_copy[ brect[1]+lw:brect[1]+brect[3]-lw, brect[0]+lw:brect[0]+brect[2]-lw ], None, fx=2.0,fy=2.0, interpolation=cv2.INTER_NEAREST));
+      cv2.waitKey(0);
+
+      
     else:
-      if (len(approx)<=9) and (brect[2] > 30) and (brect[3] > 30):
+      if (len(approx)<=9) and (brect[2] > w28) and (brect[3] > w28):
         print brect, len(approx), 16*area*3.5, peri*peri
 #        print approx;
         cv2.drawContours(c_thresh_copy, [ approx ], -1, (0,0,255),1)
 
 
-  scfilename = "%s_top.png" % (sys.argv[2]);
+#  cv2.imshow("hough", cv2.resize(c_thresh_copy, None, fx=1.0,fy=1.0, interpolation=cv2.INTER_NEAREST));
+#  cv2.waitKey(0);
+
+  scfilename = "%s_top.png" % (tmpbase);
   cv2.imwrite(scfilename, c_thresh_copy);
 
 
   #sort by y
   y_list = collections.OrderedDict();
-  for (ct, bx) in boxes:
+  for (ct, fi, bx) in boxes:
     y = int(bx[1]+0.5*bx[3]); #use middle y
     if (len(y_list)==0): 
-      y_list[y] = [ (ct,bx) ];
+      y_list[y] = [ (ct,fi,bx) ];
       continue;
     
     found=0;
@@ -522,11 +1068,11 @@ def process_score(topimg):
 #      print ly
       if (abs(int(ly)-y) < 20):
         found = 1;
-        y_list[ly].append( (ct,bx) );
+        y_list[ly].append( (ct,fi,bx) );
 #        print 'append ',ly 
 
     if found==0:
-      y_list[y] = [ (ct,bx) ];
+      y_list[y] = [ (ct,fi,bx) ];
 
 
   y_list = collections.OrderedDict(sorted(y_list.items()));
@@ -535,63 +1081,105 @@ def process_score(topimg):
   fail = 0;
   for key in y_list:
     x_list = y_list[key];
-    x_list = sorted(x_list, key=lambda x: x[1][0]);
+    x_list = sorted(x_list, key=lambda x: x[2][0]);
     y_list[key] = x_list;
+    if (len(x_list) == 1): 
+      #odd item
+      print "remove bare item line: %d" % key, x_list;
+      y_list.pop(key,None);
+      continue;
+    
     if (len(x_list) != 8): fail = 1;
+
 
   print(y_list);
     
   #proceed with validation
   if (len(y_list)!=4) or fail:
     print "Checkbox-grid is invalid (4x8 expected)";
-    cv2.imshow("hough", cv2.resize(c_thresh_copy, None, fx=2.0,fy=2.0, interpolation=cv2.INTER_NEAREST));
+    cv2.imshow("hough", cv2.resize(c_thresh_copy, None, fx=1.5,fy=1.5, interpolation=cv2.INTER_NEAREST));
     cv2.waitKey(0);
-    return false;
+    return False;
+
+  #check for double fill
+  for key in y_list:
+    cross_l = [];
+    fill_l = [];
+    empty_l = [];
+    unk_l = [];
+    x = -1;
+    for (ct, fi, bx) in y_list[key]:
+      x+=1;
+      if (ct == 'fill'): 
+        fill_l.append(x);
+      if (ct == 'cross'): 
+        cross_l.append(x)
+      if (ct == 'empty'): 
+        empty_l.append(x)
+      if (ct == 'unk'): 
+        unk_l.append(x)
+        
+    if (len(cross_l) == 1): continue; #no fixing
+    if (len(cross_l) == 0) and (len(fill_l) == 2) and (len(unk_l)==0):
+      print " autofix double fill: ",key, fill_l;
+      print y_list[key];
+      fi1 = y_list[key][fill_l[0]][1];
+      fi2 = y_list[key][fill_l[1]][1];
+      if (fi1 > fi2):
+        y_list[key][fill_l[1]] = ('cross', fi2, y_list[key][fill_l[1]][2]);
+      else:
+        y_list[key][fill_l[0]] = ('cross', fi1, y_list[key][fill_l[0]][2]);
+    if (len(cross_l) == 0) and (len(fill_l) == 0) and (len(unk_l) == 0):
+      #all empty, check if we mis-detected cross
+      prob_cross = [];
+      x = -1;
+      for (ct,fi,bx) in y_list[key]:
+        x = x + 1;
+        if (ct == 'empty') and (fi > 6.0):
+          prob_cross.append(x)
+      if (len(prob_cross) == 1):
+        print " autofix empty line with cross @", prob_cross[0];
+        fi = y_list[key][prob_cross[0]][1];
+        bx = y_list[key][prob_cross[0]][2];
+        y_list[key][prob_cross[0]] = ('cross', fi, bx );
 
   res = [];
   for key in y_list:
     rowres = -1;
-    rowmisc = -1;
+    rowmisc_l = [];
     x = -1;
-    for (ct, bx) in y_list[key]:
+    for (ct, fi, bx) in y_list[key]:
       x+=1;
       if (ct == 'empty'): continue;
       if (ct == 'fill'): 
-        if (rowmisc == -1):
-          rowmisc = x;
-          continue;
-        else:
-          fail = 1;
-          continue;
+        rowmisc_l.append(x);
+        continue;
           
       if (ct == 'unk'): 
-        if (rowmisc == -1):
-          rowmisc = x;
-          continue;
-        else:
-          fail = 1;
-          continue;
+        rowmisc_l.append(x);
+        continue;
+
       if (ct == 'cross') and (rowres == -1):
         rowres = x;
         continue;
       # some kind undefined/undetected behaviour
       fail = 1;
     
-    #cross miss-detected as fill
-    if (rowres == -1) and (rowmisc > -1):
-      rowres = rowmisc;
+    #cross miss-detected as fill or unk
+    if (rowres == -1) and (len(rowmisc_l) == 1):
+      rowres = rowmisc_l[0];
       
     res.append(rowres);
 
-  print "result: ",res;
+  print "fail: %d, result: " % fail, res;
+#  cv2.imshow("hough", cv2.resize(c_thresh_copy, None, fx=2.0,fy=2.0, interpolation=cv2.INTER_NEAREST));
+#  cv2.waitKey(0);
   
   if (not fail):
     return res;  
 #  sorted(boxes, key=lambda bx[1][1]*1000+bx[1][0]
 
     
-  cv2.imshow("hough", cv2.resize(c_thresh_copy, None, fx=2.0,fy=2.0, interpolation=cv2.INTER_NEAREST));
-  cv2.waitKey(0);
 
   return [];
 
@@ -602,12 +1190,15 @@ def process_score(topimg):
 # Main start
 #
 
-if (len(sys.argv) < 3):
-  print "Required params <src.png> <out.base>"
+if (len(sys.argv) < 2):
+  print "Required params <src.png>"
   sys.exit(1)
 
 filename = sys.argv[1];
-print "Reading from: %s, prefix: %s" % (filename, sys.argv[2])
+tmpbase = re.sub(r'img/', 'out/', filename);
+tmpbase = re.sub(r'[.]png$', '', tmpbase);
+
+print "Reading from: %s, prefix: %s" % (filename, tmpbase)
 
 #bw_img = cv2.imread('hsf_page/hsf_0/f0130_28.png') # read as it is
 orig_img = cv2.imread(filename) # read as it is
@@ -697,7 +1288,7 @@ im_height, im_width, im_channels = bw_img.shape
 img = cv2.medianBlur(bw_img, 3)
 
 #find QR code
-qrcode = get_qrdata(bw_img, filename);
+(qrcode, rotate) = get_qrdata(bw_img, filename);
 if (qrcode == 'no-qr-found') or (qrcode == ''):
   print "Error: No/bad QR code found"
   fd = open("%s.state" % filename, "w");
@@ -708,26 +1299,58 @@ if (qrcode == 'no-qr-found') or (qrcode == ''):
 #R123456
 if (re.match(r'^R[0-9][0-9][0-9][0-9][0-9][0-9]$', qrcode)):
   print "End for reglist: %s" % (qrcode)
+  fd = open("%s.state" % filename, "w");
+  fd.write("ok\n");
+  fd.close();
   sys.exit(0);
 
 #SO2018-4N134222P1 - no header
 if (re.match(r'^SO2018[-][0-5]N[0-9][0-9][0-9][0-9][0-9][0-9]P1$', qrcode)):
   print "End for regpage - no header on p1: %s" % (qrcode)
+  fd = open("%s.state" % filename, "w");
+  fd.write("ok\n");
+  fd.close();
   sys.exit(0);
 
 #SO2018-4N201013P6 - no header
+if (re.match(r'^SO2018[-][3]N[0-9][0-9][0-9][0-9][0-9][0-9]P(6)$', qrcode)):
+  print "End for 3p6 - no header: %s" % (qrcode)
+  fd = open("%s.state" % filename, "w");
+  fd.write("ok\n");
+  fd.close();
+  sys.exit(0);
+
 if (re.match(r'^SO2018[-][4]N[0-9][0-9][0-9][0-9][0-9][0-9]P(6|8|12)$', qrcode)):
   print "End for 4p6/6/12 - no header: %s" % (qrcode)
+  fd = open("%s.state" % filename, "w");
+  fd.write("ok\n");
+  fd.close();
   sys.exit(0);
 
 if (re.match(r'^SO2018[-][5]N[0-9][0-9][0-9][0-9][0-9][0-9]P(6|8|10|12|14)$', qrcode)):
   print "End for 4p6/6/12 - no header: %s" % (qrcode)
+  fd = open("%s.state" % filename, "w");
+  fd.write("ok\n");
+  fd.close();
   sys.exit(0);
 
 
-print qrcode
+print "qrdata: %s, rotate: %d" %(qrcode,rotate)
 
-#cv2.imshow("hough", cv2.resize(dilate, None, fx=0.5,fy=0.5, interpolation=cv2.INTER_NEAREST));
+# rotate img + lines
+if rotate == 180:
+  bw_img = cv2.flip(bw_img, -1); #both axis
+  img = cv2.flip(img, -1); #both axis
+  h, w, chan = bw_img.shape
+  
+  rlines = [];
+  for (x1,y1,x2,y2) in newlines[0]:
+    rlines.append( (w-x2-1, h-y2-1, w-x1-1, h-y1-1) );
+    
+  newlines[0] = rlines;
+
+
+#cv2.imshow("hough", cv2.resize(bw_img, None, fx=0.5,fy=0.5, interpolation=cv2.INTER_NEAREST));
 #cv2.waitKey(0)
 
 #sys.exit(0);
@@ -773,6 +1396,11 @@ prevLen = -1
 prevX = -1
 # group by len
 for x1,y1,x2,y2 in hlines:
+    phi = math.atan2(x1-x2, y1-y2)*180/np.pi;
+#    print phi
+    if (phi >160): phi = phi - 180;
+    if (phi<-20): phi = phi + 180;
+    if (phi<70) or (phi>110): continue;
 
     cv2.line(img,(x1,y1),(x2,y2),(0,0,255),2)
 
@@ -780,7 +1408,7 @@ for x1,y1,x2,y2 in hlines:
     if (prevLen == -1):
       prevLen = curLen
     
-    if (abs(prevLen-curLen)<=15): 
+    if (abs(prevLen-curLen)<=55): 
       #samelen
       curLen = prevLen
 
@@ -803,7 +1431,7 @@ longest_len = 0;
 
 for key in linesbylen:
   print "len: %s, count: %d" % (key, len(linesbylen[key]))
-  if len(linesbylen[key])<2: continue;
+  if len(linesbylen[key])<1: continue;
   if (int(key) > longest_len): 
     longest_len = int(key);
   
@@ -850,6 +1478,8 @@ for key in linesbylen:
     Xc+=1;
     if (botB < y1): botB = y1
     if (botT > y1): botT = y1
+    if (botB < y2): botB = y2
+    if (botT > y2): botT = y2
 
 leftX = int(round(leftX/Xc))
 rightX = int(round(rightX/Xc))
@@ -857,39 +1487,62 @@ rightX = int(round(rightX/Xc))
 print "left: %d, right: %d, bottomTop: %d, bottomBottom: %d" % (leftX, rightX, botT, botB)
 
 
+#cv2.imshow("hough", img[0:botT, :]);
+#cv2.waitKey(0);
+
 topT = 0;
 topB = 0;
-topL = 0;
+topL = im_width;
 topR = 0;
 
 Xc = 0
 Xkey = 0;
 for key in linesbylen:
+  if (key > 0.70*longest_len): continue;
+  print(key, linesbylen[key])
   for line in linesbylen[key]:
-    if (line[1] < botT-10) and (key < 0.75*longest_len):
+    print 'line: ', line
+    if (line[1] < botT-15) and (line[1] > botT * 0.4):
+      print ' match'
       if (Xkey == 0): Xkey = key;
       if (key != Xkey): continue;
       
       topB += line[1] + line[3];
-      topL += line[0];
-      topR += line[2];
+      topL = min(topL, line[0]);
+      topR = max(topR, line[2]);
       Xc+=1;
       print key,line
 
+#fix for erased 2nd line:
+if Xc == 0:
+  Xc = 1;
+  ww = (rightX - leftX); #1459
 
-topT = int(round( topB / 2.0 / Xc * 0.24));
-topB = int(round( topB / 2.0 / Xc * 0.95));
+  topL = leftX 
+  topR = leftX + int(ww * 0.7)
+  
+  topB = (botT - 0.14*ww)*2.0;
 
-topL = max( int(round(topL/Xc)-2), 0);
-topR = int(round(topR/Xc)+2);
+topL = max( topL-2, 0);
+topR = topR+2;
+
+ww = (topR-topL)
+
+topB = int(round( topB / 2.0 / Xc * 1.09));
+topT = max( 0, int(topB - ww*0.42)) #0.38
+
+
+topL = topL + int(0.13*ww) #0.20
+topR = topR - int(0.20*ww);
 
 print "top: (%d,%d) (%d,%d)" % (topL, topT, topR, topB)
 
-res = process_score(bw_img[topT:topB, topL:topR]);
+res = process_score(bw_img[topT:topB, topL:topR], ww);
 
-fd = open("%s.score" % filename, "w");
-fd.write("%d %d %d %d\n" % ( res[0], res[1], res[2], res[3]) );
-fd.close();
+if len(res)==4:
+  fd = open("%s.score" % filename, "w");
+  fd.write("%d %d %d %d\n" % ( res[0], res[1], res[2], res[3]) );
+  fd.close();
 
 
 cv2.line(img,(topL-2,topT),(topL-2,topB),(255,0,0),2)
@@ -1126,7 +1779,7 @@ for r in range(0,3):
       print "imt: L:%d, T: %d, R: %d, B: %d,  shape: %d %d" % (srcL, srcT, srcR, srcB, sym.shape[1], sym.shape[0]);
       
       imOut = cv2.resize(imT[srcT:srcB,srcL:srcR], (28,28), interpolation = cv2.INTER_CUBIC)
-      cv2.imwrite("%s_%d_%d.png" % (sys.argv[2], r,n), imOut);
+      cv2.imwrite("%s_%d_%d.png" % (tmpbase, r,n), imOut);
   
       cv2.imshow("symbol", cv2.resize(imT, None, fx=4.0,fy=4.0, interpolation=cv2.INTER_NEAREST) );
       cv2.imshow("symOut", cv2.resize(imOut, None, fx=4.0,fy=4.0, interpolation=cv2.INTER_NEAREST) );
