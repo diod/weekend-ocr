@@ -61,8 +61,6 @@ def get_page_rotate_angle(bw_img, min_line):
   #crop
   cropBox = get_image_cropBox(dilate);
   
-
-
   dilate =  dilate[cropBox[0]:cropBox[1]+1, cropBox[2]:cropBox[3]+1]
 
   #lines= cv2.HoughLines(edges,1,np.pi/180,200);
@@ -76,6 +74,7 @@ def get_page_rotate_angle(bw_img, min_line):
   avgangle = 0.0
   avgcnt = 0
 
+  angleG = {}
   for n in range(0,len(lines)):
     for x1,y1,x2,y2 in lines[n]:
       cv2.line(img,(x1,y1),(x2,y2),(0,0,255),2)
@@ -85,21 +84,41 @@ def get_page_rotate_angle(bw_img, min_line):
         phi+=180.0
 
       #horizontal lines    
-      if (phi>70 and phi<110):
-        avgangle+=phi-90.0
-        avgcnt+=1
+#      if (phi>70 and phi<110):
+      qphi = int( (phi+2.5) / 5.0) * 5;
+      if (str(qphi) in angleG):
+        angleG[str(qphi)].append(phi);
+      else:
+        angleG[str(qphi)] = [];
+        angleG[str(qphi)].append(phi);
     
-      #print "phi: %.1f (%d %d),(%d,%d)" % (phi, x1,y1, x2,y2)
+      print "phi: %.1f (%d %d),(%d,%d)" % (phi, x1,y1, x2,y2)
+
+#  print angleG
+  maxlenQphi = -1
+  for qphi,lst in angleG.iteritems():
+    if (maxlenQphi == -1):
+      maxlenQphi = qphi
+      continue;
+    if (len(angleG[maxlenQphi]) < len(lst)):
+      maxlenQphi = qphi
+
+#  print "maxlenQphi: ", maxlenQphi
+  avgcnt = len(angleG[maxlenQphi])
+  avgangle = sum(angleG[maxlenQphi])
 
   if (avgcnt == 0):
     print "get_angle: Looks like empty/invalid page -- no long lines here"
     return [ 0.0, [], cropBox ];
 
-  angle = -avgangle / avgcnt;
+  angle = -(avgangle / avgcnt) + 90.0;
+
+  if (angle>45): angle=angle - 90.0;
+
   print "get_angle: avg: cnt=%d anglediff = %0.4f" % (avgcnt, angle)
 
 #  cv2.imshow("dilate", cv2.resize(dilate, None, fx=0.5,fy=0.5, interpolation=cv2.INTER_NEAREST));
-#  cv2.waitKey(25);
+#  cv2.waitKey(0);
 
   return [angle,lines,cropBox]
 
@@ -285,7 +304,7 @@ def get_qr_cgroup(bw, im_width, im_height):
     if (len(cgroup)>=3):
       return (cgroup,rotate);
     
-  elif (im_width >= 1480):
+  elif (im_width >= 1400):
     cgroup = find_qr(bw, int(im_width/3), im_width, 0, int(im_height/3),18);
     print "cgroup@18: %d" % len(cgroup)
     if (len(cgroup)>=3) and (cgroup[0][2]>10):
@@ -771,8 +790,8 @@ def check_crossing(ebox):
   if (nzc >= tcc*0.398):
     return ('fill', fill);
 
-  cv2.imshow("houghlp", cv2.resize(gimg, None, fx=7.0,fy=7.0, interpolation=cv2.INTER_NEAREST));
-  cv2.waitKey(0);
+#  cv2.imshow("houghlp", cv2.resize(gimg, None, fx=7.0,fy=7.0, interpolation=cv2.INTER_NEAREST));
+#  cv2.waitKey(0);
 
 #    ang = np.rad2deg( np.arctan2( (x2-x1), (y2-y1) ));
 #    print ang, x1,y1, x2,y2;
@@ -854,7 +873,7 @@ def process_score(topimg, topw):
   c_thresh = cv2.dilate(c_thresh, cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3)), 1);
   c_thresh = cv2.erode(c_thresh, cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3)), 1);
   
-#  cv2.imshow("hough", cv2.resize(c_thresh, None, fx=2.0,fy=2.0, interpolation=cv2.INTER_NEAREST));
+#  cv2.imshow("hough", cv2.resize(c_thresh, None, fx=1.2,fy=1.2, interpolation=cv2.INTER_NEAREST));
 #  cv2.waitKey(0);
   
 #    ret, c_thresh = cv2.threshold( c_gray, 230, 255, cv2.THRESH_BINARY_INV); #crop threshold invert
@@ -874,13 +893,13 @@ def process_score(topimg, topw):
   ylist = np.where( proj_y > mpy )[0]
   print "p1: ylist: ", mpy/255,ylist
   
-  maxY = max(ylist)-9;
-  maxX = max(xlist)-2;
+  maxY = max(ylist)-int(im_height/38);
+  maxX = max(xlist)-3;
 
   #do not crop too much
-  if (maxX < im_width*0.8):
+  if (maxX < im_width*0.71):
     maxX = im_width-1
-  if (maxY < im_height*0.8):
+  if (maxY < im_height*0.75):
     maxY = im_height-1
 
   c_thresh = c_thresh[ 0:maxY, 0:maxX ]  
@@ -888,7 +907,7 @@ def process_score(topimg, topw):
   im_height = maxY
   print "p1: crop to: ", im_width,im_height
 
-#  cv2.imshow("hough", cv2.resize(c_thresh, None, fx=2.0,fy=2.0, interpolation=cv2.INTER_NEAREST));
+#  cv2.imshow("hough", cv2.resize(c_thresh, None, fx=1.2,fy=1.2, interpolation=cv2.INTER_NEAREST));
 #  cv2.waitKey(0);
 
   #pass2: get grid maybe
@@ -926,8 +945,8 @@ def process_score(topimg, topw):
     maxY = im_height-1;
     nomask = 1;
 
-  cv2.imshow("hough", cv2.resize(c_thresh[minY:maxY, minX:maxX], None, fx=2.0,fy=2.0, interpolation=cv2.INTER_NEAREST));
-  cv2.waitKey(0);
+#  cv2.imshow("hough", cv2.resize(c_thresh[minY:maxY, minX:maxX], None, fx=2.0,fy=2.0, interpolation=cv2.INTER_NEAREST));
+#  cv2.waitKey(0);
 
   #do not crop too much
   if (maxX < im_width*0.8):
@@ -1037,8 +1056,8 @@ def process_score(topimg, topw):
       cv2.drawContours(c_thresh_copy, [ approx ], -1, (0,255,0),1)
 
 
-      cv2.imshow("sym", cv2.resize(c_thresh_copy[ brect[1]+lw:brect[1]+brect[3]-lw, brect[0]+lw:brect[0]+brect[2]-lw ], None, fx=2.0,fy=2.0, interpolation=cv2.INTER_NEAREST));
-      cv2.waitKey(0);
+#      cv2.imshow("sym", cv2.resize(c_thresh_copy[ brect[1]+lw:brect[1]+brect[3]-lw, brect[0]+lw:brect[0]+brect[2]-lw ], None, fx=2.0,fy=2.0, interpolation=cv2.INTER_NEAREST));
+#      cv2.waitKey(0);
 
       
     else:
@@ -1097,8 +1116,8 @@ def process_score(topimg, topw):
   #proceed with validation
   if (len(y_list)!=4) or fail:
     print "Checkbox-grid is invalid (4x8 expected)";
-    cv2.imshow("hough", cv2.resize(c_thresh_copy, None, fx=1.5,fy=1.5, interpolation=cv2.INTER_NEAREST));
-    cv2.waitKey(0);
+#    cv2.imshow("hough", cv2.resize(c_thresh_copy, None, fx=1.5,fy=1.5, interpolation=cv2.INTER_NEAREST));
+#    cv2.waitKey(0);
     return False;
 
   #check for double fill
@@ -1129,6 +1148,15 @@ def process_score(topimg, topw):
         y_list[key][fill_l[1]] = ('cross', fi2, y_list[key][fill_l[1]][2]);
       else:
         y_list[key][fill_l[0]] = ('cross', fi1, y_list[key][fill_l[0]][2]);
+      continue;
+
+    if (len(cross_l) == 0) and (len(fill_l) == 1) and (len(unk_l)==1):
+      print " autofix unk+fill: ", key, unk_l, fill_l
+      unk_fi = y_list[key][unk_l[0]][1];
+      if (unk_fi >10 and unk_fi < 40):
+        y_list[key][unk_l[0]] = ('cross', unk_fi, y_list[key][unk_l[0]][2]);
+      continue;
+
     if (len(cross_l) == 0) and (len(fill_l) == 0) and (len(unk_l) == 0):
       #all empty, check if we mis-detected cross
       prob_cross = [];
@@ -1493,25 +1521,41 @@ print "left: %d, right: %d, bottomTop: %d, bottomBottom: %d" % (leftX, rightX, b
 topT = 0;
 topB = 0;
 topL = im_width;
-topR = 0;
+topR = im_width;
 
 Xc = 0
 Xkey = 0;
+
+maxClen = -1;
 for key in linesbylen:
-  if (key > 0.70*longest_len): continue;
-  print(key, linesbylen[key])
+  if (key > 0.69*longest_len): continue;
+  if (key < 0.61*longest_len): continue;
+  if maxClen==-1:
+    maxClen = len(linesbylen[key]);
+    continue;
+  if maxClen < len(linesbylen[key]):
+    maxClen = len(linesbylen[key]);
+
+#for key in linesbylen:
+#  if (key > 0.69*longest_len): continue;
+#  if (len(linesbylen[key])<2): continue;
+#  print(key, linesbylen[key])
+for key in linesbylen:
+  if (key > 0.69*longest_len): continue;
+  if (key < 0.61*longest_len): continue;
+#  if (len(linesbylen[key]) < 0.60*maxClen): continue;
   for line in linesbylen[key]:
-    print 'line: ', line
-    if (line[1] < botT-15) and (line[1] > botT * 0.4):
+    print 'line: ', line, key, maxClen
+    if (line[1] < botT*0.85) and (line[1] > botT * 0.4):
       print ' match'
       if (Xkey == 0): Xkey = key;
       if (key != Xkey): continue;
       
       topB += line[1] + line[3];
       topL = min(topL, line[0]);
-      topR = max(topR, line[2]);
+      topR = min(topR, line[2]);
       Xc+=1;
-      print key,line
+#      print key,line
 
 #fix for erased 2nd line:
 if Xc == 0:
@@ -1534,6 +1578,8 @@ topT = max( 0, int(topB - ww*0.42)) #0.38
 
 topL = topL + int(0.13*ww) #0.20
 topR = topR - int(0.20*ww);
+#cv2.imshow("hough", img[topT:topB, topL:topR]);
+#cv2.waitKey(0);
 
 print "top: (%d,%d) (%d,%d)" % (topL, topT, topR, topB)
 
