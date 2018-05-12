@@ -273,7 +273,7 @@ foreach($imgs as $info) {
       @$works[$bcode]['pages'][$page] = $info['imgname'];
       if ($info['taskno']) {
         $works[$bcode]['tasks'][$info['taskno']] = [ $info['score_1'], $info['score_2'], $info['score_3'] ];
-        $works[$bcode]['taskpage'][$info['taskno']] = $info['page'];
+        $works[$bcode]['taskpage'][$info['taskno']] = $info['pdfname'].'_p'.$info['page'];
       }
       $works[$bcode]['page'][$page] = $info['page'];
     }
