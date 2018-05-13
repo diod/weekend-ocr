@@ -325,7 +325,16 @@ foreach($works as $bcode => $work) {
 
 print_r($cnt);
 
-
+//rotate result files
+if (file_exists("result.csv.2")) {
+  unlink("result.csv.2");
+}
+if (file_exists("result.csv.1")) {
+  rename("result.csv.1", "result.csv.2");
+}
+if (file_exists("result.csv")) {
+  rename("result.csv", "result.csv.1");
+}
 
 $fd = fopen("result.csv", "w");
 $cols = [ 'штамп времени', 'код условия', 'регкод'];
