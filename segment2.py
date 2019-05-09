@@ -8,119 +8,12 @@ import os.path
 import subprocess
 import re
 import collections
+
+import lib.findqr
 #from matplotlib import pyplot as plt
 
-def get_image_cropBox(bwimg, padding=20):
-  rows, cols = bwimg.shape
+np.set_printoptions(threshold=np.nan)
 
-  non_empty_columns = np.where( np.sum(bwimg, axis=0, dtype=np.uint32) > 2000 )[0]
-  non_empty_rows    = np.where( np.sum(bwimg, axis=1, dtype=np.uint32) > 2000 )[0]
-
-#  print test
-
-#  print test[156],test[157],test[158]
-#  print test[742],test[743],test[744]
-
-
-#  non_empty_columns = np.where(bwimg.max(axis=0) > 0)[0]
-#  non_empty_rows = np.where(bwimg.max(axis=1) > 0)[0]
-  
-#  print non_empty_columns
-#  print non_empty_rows
-  
-#  cv2.imshow("dilate", cv2.resize(bwimg, None, fx=0.5,fy=0.5, interpolation=cv2.INTER_NEAREST));
-#  cv2.waitKey(25);
-  
-  
-  
-  #x1:x2,y1:y2
-  
-  if (len(non_empty_rows) == 0) or (len(non_empty_columns) == 0):
-    fd = open("%s.state" % sys.argv[1], "w");
-    fd.write("empty nohlines\n");
-    fd.close();
-    sys.exit(0);
-  
-  cropBox = ( max(0, min(non_empty_rows) - padding),
-              min(max(non_empty_rows) + padding, rows),
-              max(0, min(non_empty_columns)  - padding),
-              min(max(non_empty_columns) + padding, cols))
-
-  print "Crop box: (%d,%d) - (%d,%d)" %(cropBox[0], cropBox[2], cropBox[1], cropBox[3]);
-  return cropBox
-
-def get_page_rotate_angle(bw_img, min_line):
-  img = cv2.medianBlur(bw_img, 3)
-
-  #fix rotation
-  dilate = cv2.cvtColor(bw_img,cv2.COLOR_BGR2GRAY)
-  (_,dilate) = cv2.threshold(dilate,0,255,cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)
-
-  dilate = cv2.dilate(dilate, cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3)), 1);
-
-  #crop
-  cropBox = get_image_cropBox(dilate);
-  
-  dilate =  dilate[cropBox[0]:cropBox[1]+1, cropBox[2]:cropBox[3]+1]
-
-  #lines= cv2.HoughLines(edges,1,np.pi/180,200);
-  lines= cv2.HoughLinesP(image=dilate,rho=1,theta=np.pi/1440,threshold=600,minLineLength=min_line,maxLineGap=7);
-  if lines is None:
-    print "get_angle: Looks like empty/invalid page -- no long lines here"
-    return [ 0.0, [], cropBox ];
-
-  print "get_angle: Hough lines: %d" % (len(lines[0]))
-
-  avgangle = 0.0
-  avgcnt = 0
-
-  angleG = {}
-  for n in range(0,len(lines)):
-    for x1,y1,x2,y2 in lines[n]:
-      cv2.line(img,(x1,y1),(x2,y2),(0,0,255),2)
-
-      phi = math.atan2(x1-x2, y1-y2)*180/np.pi;
-      if (phi<0):
-        phi+=180.0
-
-      #horizontal lines    
-#      if (phi>70 and phi<110):
-      qphi = int( (phi+2.5) / 5.0) * 5;
-      if (str(qphi) in angleG):
-        angleG[str(qphi)].append(phi);
-      else:
-        angleG[str(qphi)] = [];
-        angleG[str(qphi)].append(phi);
-    
-      print "phi: %.1f (%d %d),(%d,%d)" % (phi, x1,y1, x2,y2)
-
-#  print angleG
-  maxlenQphi = -1
-  for qphi,lst in angleG.iteritems():
-    if (maxlenQphi == -1):
-      maxlenQphi = qphi
-      continue;
-    if (len(angleG[maxlenQphi]) < len(lst)):
-      maxlenQphi = qphi
-
-#  print "maxlenQphi: ", maxlenQphi
-  avgcnt = len(angleG[maxlenQphi])
-  avgangle = sum(angleG[maxlenQphi])
-
-  if (avgcnt == 0):
-    print "get_angle: Looks like empty/invalid page -- no long lines here"
-    return [ 0.0, [], cropBox ];
-
-  angle = -(avgangle / avgcnt) + 90.0;
-
-  if (angle>45): angle=angle - 90.0;
-
-  print "get_angle: avg: cnt=%d anglediff = %0.4f" % (avgcnt, angle)
-
-#  cv2.imshow("dilate", cv2.resize(dilate, None, fx=0.5,fy=0.5, interpolation=cv2.INTER_NEAREST));
-#  cv2.waitKey(0);
-
-  return [angle,lines,cropBox]
 
 
 def im_norm_strokew_find_mu(im0, im1, tau_0, tau_1, targetT):
@@ -281,17 +174,18 @@ def get_qr_cgroup(bw, im_width, im_height, tried_pxsz):
   rotate = 0;
 
   tests = [
+    ( 0,    12, int(im_width/3),  im_width,          0,                  int(im_height/2),  0 ),
+
     ( 2000, 27, int(im_width/3),  im_width,          0,                  int(im_height/3),  0 ),
     ( 2000, 27, 0,                int(im_width*2/3), int(im_height*2/3), im_height,         180 ),
     ( 1700, 22, int(im_width/3),  im_width,          0,                  int(im_height/3),  0 ),
     ( 1700, 18, int(im_width/3),  im_width,          0,                  int(im_height/3),  0 ),
-    ( 1350, 18, int(im_width/3),  im_width,          0,                  int(im_height/3),  0 ),
-    ( 1350, 18, 0,                int(im_width*2/3), int(im_height*2/3), im_height,         180 ),
-    ( 1350, 14, int(im_width/3),  im_width,          0,                  int(im_height/3),  0 ),
-    ( 1350, 14, 0,                int(im_width*2/3), int(im_height*2/3), im_height,         180 ),
+    ( 1340, 18, int(im_width/3),  im_width,          0,                  int(im_height/3),  0 ),
+    ( 1340, 18, 0,                int(im_width*2/3), int(im_height*2/3), im_height,         180 ),
+    ( 1340, 14, int(im_width/3),  im_width,          0,                  int(im_height/3),  0 ),
+    ( 1340, 14, 0,                int(im_width*2/3), int(im_height*2/3), im_height,         180 ),
     ( 1150, 15, int(im_width/3),  im_width,          0,                  int(im_height/3),  0 ),
     ( 900,  13, 0,                im_width,          0,                  im_height,         0 ),
-    ( 0,    10, int(im_width/3),  im_width,          0,                  int(im_height/3),  0 ),
     ( 0,    9,  int(im_width/3),  im_width,          0,                  int(im_height/3),  0 ),
   ];
 
@@ -562,6 +456,81 @@ def binarize_qr(img, sz):
     qri[31,0] = 0;
     qri[32,0] = 0;
 
+
+  if sz==37: #y,x
+    qri[0,0] = 0;
+    qri[1,0] = 0;
+    qri[2,0] = 0;
+    qri[3,0] = 0;
+    qri[4,0] = 0;
+    qri[5,0] = 0;
+    qri[6,0] = 0;
+
+    qri[0,36] = 0;
+    qri[1,36] = 0;
+    qri[2,36] = 0;
+    qri[3,36] = 0;
+    qri[4,36] = 0;
+    qri[5,36] = 0;
+    qri[6,36] = 0;
+  
+#    qri[17,17] = 255;
+#    qri[17,18] = 255;
+#    qri[17,19] = 255;
+
+#    qri[18,17] = 255;
+#    qri[18,18] = 0;
+#    qri[18,19] = 255;
+
+#    qri[19,17] = 255;
+#    qri[19,18] = 255;
+#    qri[19,19] = 255;
+
+    qri[30,0] = 0;
+    qri[31,0] = 0;
+    qri[32,0] = 0;
+    qri[33,0] = 0;
+    qri[34,0] = 0;
+    qri[35,0] = 0;
+    qri[36,0] = 0;
+
+  if sz==41: #y,x
+    qri[0,0] = 0;
+    qri[1,0] = 0;
+    qri[2,0] = 0;
+    qri[3,0] = 0;
+    qri[4,0] = 0;
+    qri[5,0] = 0;
+    qri[6,0] = 0;
+
+    qri[0,40] = 0;
+    qri[1,40] = 0;
+    qri[2,40] = 0;
+    qri[3,40] = 0;
+    qri[4,40] = 0;
+    qri[5,40] = 0;
+    qri[6,40] = 0;
+  
+#    qri[17,17] = 255;
+#    qri[17,18] = 255;
+#    qri[17,19] = 255;
+
+#    qri[18,17] = 255;
+#    qri[18,18] = 0;
+#    qri[18,19] = 255;
+
+#    qri[19,17] = 255;
+#    qri[19,18] = 255;
+#    qri[19,19] = 255;
+
+    qri[34,0] = 0;
+    qri[35,0] = 0;
+    qri[36,0] = 0;
+    qri[37,0] = 0;
+    qri[38,0] = 0;
+    qri[39,0] = 0;
+    qri[40,0] = 0;
+
   return qri  
 
 def parse_qr(bw, im_width, cgroup, tmpbase):
@@ -588,7 +557,7 @@ def parse_qr(bw, im_width, cgroup, tmpbase):
   ty = max( ty - int(3.5*ps), 0 );
   by = by + int(3.5*ps);
 
-#  print "(%d,%d) -- (%d,%d)" %( lx, ty, rx, by )
+  print "(%d,%d) -- (%d,%d) ps:%d" %( lx, ty, rx, by, ps )
   
   bw2 = (255 - bw[ty:by, lx:rx]);
 
@@ -651,6 +620,32 @@ def parse_qr(bw, im_width, cgroup, tmpbase):
 
     qrfilename = "%s_qr33.png" % (tmpbase);
     qrb_file   = "%s_qr33b.png" % (tmpbase);
+    cv2.imwrite(qrfilename, qri);
+    
+    cnv = subprocess.Popen(['/usr/bin/convert', qrfilename, '-scale', '1000%', qrb_file ], stdout=subprocess.PIPE).communicate()[0]
+    qrcode = subprocess.Popen(['/usr/bin/zbarimg', '-q', qrb_file ], stdout=subprocess.PIPE).communicate()[0]
+    qrcode = qrcode.strip().replace('QR-Code:','').strip();
+
+  if qrcode == '':
+    #try4
+    qri = binarize_qr(bw2[ cropBox[0]:cropBox[1]+1, cropBox[2]+1:cropBox[3]+1 ], 37);
+#    qri = binarize_qr(bw2, 37);
+
+    qrfilename = "%s_qr37.png" % (tmpbase);
+    qrb_file   = "%s_qr37b.png" % (tmpbase);
+    cv2.imwrite(qrfilename, qri);
+    
+    cnv = subprocess.Popen(['/usr/bin/convert', qrfilename, '-scale', '1000%', qrb_file ], stdout=subprocess.PIPE).communicate()[0]
+    qrcode = subprocess.Popen(['/usr/bin/zbarimg', '-q', qrb_file ], stdout=subprocess.PIPE).communicate()[0]
+    qrcode = qrcode.strip().replace('QR-Code:','').strip();
+
+  if qrcode == '':
+    #try4
+    qri = binarize_qr(bw2[ cropBox[0]:cropBox[1]+1, cropBox[2]+1:cropBox[3]+1 ], 41);
+#    qri = binarize_qr(bw2, 41);
+
+    qrfilename = "%s_qr41.png" % (tmpbase);
+    qrb_file   = "%s_qr41b.png" % (tmpbase);
     cv2.imwrite(qrfilename, qri);
     
     cnv = subprocess.Popen(['/usr/bin/convert', qrfilename, '-scale', '1000%', qrb_file ], stdout=subprocess.PIPE).communicate()[0]
@@ -779,12 +774,17 @@ def check_crossing(ebox):
     print " empty: xlist ", xlist
     return ('empty',0.0);
   
-  if (len(xlist)<=2):
-    print " empty: xlist ", xlist
-    return ('empty',0.0);
+#  if (len(xlist)<=2):
+#    print " empty: xlist ", xlist
+#    return ('empty',0.0);
     
   Lminx = min(xlist);
   Rmaxx = max(xlist);
+
+  if (Lminx > int(0.3*imw)):
+    Lminx = 0;
+  if (Rmaxx < int(0.7*imw)):
+    Rmaxx = imw-1;
  
   x0 = Lminx
   Lmaxx = x0
@@ -964,7 +964,7 @@ def check_crossing(ebox):
   if (len(lines[0])>=12) and (fill >= 0.35):
     return ('fill', fill);
 
-  if crosses * 2.5 >= checks:
+  if crosses * 2.7 >= checks:
     return ('cross', fill);
 
   if (nzc >= tcc*0.398):
@@ -1088,17 +1088,38 @@ def process_score(topimg, topw, grid_items_x):
   sorted_pjy = np.sort(proj_y);
   print "spy: ", sorted_pjy
     
-  if len(sorted_pjy) > 30:
+  if len(sorted_pjy) > 300:
+    med_mpy = sorted_pjy[ len(sorted_pjy) - 25 ];
+  else:
     med_mpy = sorted_pjy[ len(sorted_pjy) - 15 ];
  
-  mpy = med_mpy*1.0;  
+  mpy = med_mpy*0.95;  
+
+  #remove peaks - questionable
+  for y in range(1,len(proj_y)-2):
+    if (proj_y[y-1] < mpy) and (proj_y[y] > mpy) and (proj_y[y+1] < mpy):
+      proj_y[y] = proj_y[y-1];
+    if (proj_y[y] > mpy*99.0):
+      proj_y[y] = 0;
+      proj_y[y-1] = 0;
+      proj_y[y-2] = 0;
+      proj_y[y+1] = 0;
+      proj_y[y+2] = 0;
+
+  if (proj_y[len(proj_y)-1] > mpy*1.5):
+    proj_y[len(proj_y)-1] = 0;
+
+  print "mpy: ", mpy, " proj_y: ", proj_y
+
   
-  ylist = np.where( proj_y > mpy)[0]
+  ylist = np.where( proj_y >= mpy)[0]
   print "p1: med_mpy: ", med_mpy, " mpy: ", mpy, ", ylist: ", mpy/255, ylist
   
 
-  maxY = max(ylist)-int(im_height/38);
+  maxY = max(ylist); #-int(im_height/38);
   maxX = max(xlist);
+  minY = max(0, min(ylist)-1);
+  minX = max(0, min(xlist)-1);
 
   if (top_mpx > med_mpx*1.20): 
     maxX = maxX-3;
@@ -1109,13 +1130,14 @@ def process_score(topimg, topw, grid_items_x):
   if (maxY < im_height*0.75):
     maxY = im_height
 
-  print "p1: crop %dx%d to:%dx%d " % (im_width,im_height, maxX, maxY)
-  c_thresh = c_thresh[ 0:maxY, 0:maxX ]  
-  im_width = maxX
-  im_height = maxY
+  print "p1: crop %dx%d to: (%d:%d)x(%d:%d) " % (im_width,im_height, minX, maxX, minY, maxY)
+  c_thresh = c_thresh[ minY:maxY, minX:maxX ]  
 
 #  cv2.imshow("hough", cv2.resize(c_thresh, None, fx=1.2,fy=1.2, interpolation=cv2.INTER_NEAREST));
 #  cv2.waitKey(0);
+
+  im_height = maxY-minY
+  im_width = maxX-minX
 
   #pass2: get grid maybe
   nomask = 0;
@@ -1133,11 +1155,11 @@ def process_score(topimg, topw, grid_items_x):
   ylist = np.where( proj_y > mpy )[0]
   print "p2: ylist: ", mpy/255, ylist
   
-  minY = min(ylist)-1;
-  maxY = max(ylist)+1;
+  minY = max(min(ylist)-1, 0);
+  maxY = min(max(ylist)+1, im_height);
   
-  minX = min(xlist)-1;
-  maxX = max(xlist)+1;
+  minX = max(min(xlist)-1, 0);
+  maxX = min(max(xlist)+1, im_width);
 
   if minX>0.2*im_width:
     minX = 0;
@@ -1157,9 +1179,9 @@ def process_score(topimg, topw, grid_items_x):
 
   #do not crop too much
   if (maxX < im_width*0.8):
-    maxX = im_width-1
+    maxX = im_width
   if (maxY < im_height*0.8):
-    maxY = im_height-1
+    maxY = im_height
 
   c_thresh = c_thresh[ minY:maxY, minX:maxX ]  
   im_width = maxX-minX+1
@@ -1204,7 +1226,7 @@ def process_score(topimg, topw, grid_items_x):
   c_thresh = c_thresh_orig.copy();
 
   w30 = int(topw/31.6)
-  w28 = int(topw/33.9)
+  w28 = int(topw/33.9)-1
   w65 = int(topw/14.61)
   w80 = int(topw/11.9)
   w400= int(topw/4)
@@ -1226,7 +1248,7 @@ def process_score(topimg, topw, grid_items_x):
   # pass2
   (contours,_) = cv2.findContours(c_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE, (1,1) );
     
-  print "contour count: %d" % len(contours)
+  print "contour count(2): %d" % len(contours)
   contours = sorted(contours, key = cv2.contourArea, reverse = True);
 
   boxes = [];
@@ -1240,10 +1262,10 @@ def process_score(topimg, topw, grid_items_x):
     area   = cv2.contourArea(approx);
 
     brect  = cv2.boundingRect(approx);
-#    print (area*2), (peri*peri/16.0), brect
+#    print "cnt: ", (area*3.5), (peri*peri/16.0), brect, w28, w65
 
 
-    if (16*area*3.5 > peri*peri) and (len(approx)<=9) and (brect[2] > w28) and (brect[2] < w65) and (brect[3] > w28) and (brect[3] < w80):
+    if (16*area*3.5 > peri*peri) and (len(approx)<=9) and (brect[2] >= w28) and (brect[2] <= w65) and (brect[3] >= w28) and (brect[3] <= w80):
       #check box empty
       lw = 4;
 
@@ -1558,16 +1580,25 @@ if (qrcode == 'no-qr-found') or (qrcode == ''):
   sys.exit(1);
 
 #R123456
-if (re.match(r'^R[0-9][0-9][0-9][0-9][0-9][0-9]8$', qrcode)):
+if (re.match(r'^R[0-9][0-9][0-9][0-9][0-9][0-9][0-9]$', qrcode)):
   print "End for reglist: %s" % (qrcode)
   fd = open("%s.state" % filename, "w");
   fd.write("ok\n");
   fd.close();
   sys.exit(0);
 
-#SO2018-4N134222P1 - no header
-if (re.match(r'^AO2018[-][0-9]N[0-9][0-9][0-9][0-9]CS[0-9][0-9]P1\(Title\)$', qrcode)):
+#SO-2019-G:2-N:1126-Cs:13-Pg:1-RC:UL-Title - no header
+#SO-2019-G:2-N:0466-Cs:32-Pg:1-RC:UO-Title
+if (re.match(r'^SO-2019-G:[0-5]-N:[0-9][0-9][0-9][0-9]-Cs:[0-9][0-9]-Pg:1-RC:[A-Z][A-Z]-Title$', qrcode)):
   print "End for regpage - no header on p1: %s" % (qrcode)
+  fd = open("%s.state" % filename, "w");
+  fd.write("ok\n");
+  fd.close();
+  sys.exit(0);
+
+#SO-2019-G:2-N:0466-Cs:32-Pg:17-RC:SI-Dop
+if (re.match(r'^SO-2019-G:[0-5]-N:[0-9][0-9][0-9][0-9]-Cs:[0-9][0-9]-Pg:17-RC:[A-Z][A-Z]-Dop$', qrcode)):
+  print "End for regpage - no header on p17 (dop): %s" % (qrcode)
   fd = open("%s.state" % filename, "w");
   fd.write("ok\n");
   fd.close();
@@ -1575,7 +1606,8 @@ if (re.match(r'^AO2018[-][0-9]N[0-9][0-9][0-9][0-9]CS[0-9][0-9]P1\(Title\)$', qr
 
 #get class
 # AO2018-6N1521CS23P9Pr4MP7
-res = re.match(r'^AO2018[-]([0-9])N([0-9][0-9][0-9][0-9])CS[0-9][0-9]P([0-9]+)(.*)$', qrcode)
+# SO-2019-G:2-N:1126-Cs:13-Pg:3-RC:HL-Pr:1-MxPt:5-Problem
+res = re.match(r'^SO-2019-G:([0-9])-N:([0-9][0-9][0-9][0-9])-Cs:[0-9][0-9]-Pg:([0-9]+)-RC:[A-Z][A-Z]-Pr:([0-9])-MxPt:([0-9])-Problem$', qrcode)
 if (not res):
   print "Whoops no class info in QR: %s" % (qrcode)
   sys.exit(0);
@@ -1583,30 +1615,34 @@ if (not res):
 clas = int(res.group(1));
 regnumber = int(res.group(2));
 page = int(res.group(3));
-print "QR: class: %d, regnumber: %d, page: %d" % (clas, regnumber, page);
+task = int(res.group(4));
+maxpt = int(res.group(5));
 
-if (clas in [3,4]) and (page in [9]):
-  print "End for c:%d p:9 - no header: %s" % (clas,qrcode)
-  fd = open("%s.state" % filename, "w");
-  fd.write("ok\n");
-  fd.close();
-  sys.exit(0);
+print "QR: class: %d, regnumber: %d, page: %d, task: %d, maxPt: %d" % (clas, regnumber, page, task, maxpt);
+#if (clas in [3,4]) and (page in [9]):
+#  print "End for c:%d p:9 - no header: %s" % (clas,qrcode)
+#  fd = open("%s.state" % filename, "w");
+#  fd.write("ok\n");
+#  fd.close();
+#  sys.exit(0);
 
-if (clas in [5,6,8]) and (page in [4,6,8,10,12,14,16,17,18,19,20]):
-  print "End for c:%d p:4/6/8/10etc - no header: %s" % (clas,qrcode)
-  fd = open("%s.state" % filename, "w");
-  fd.write("ok\n");
-  fd.close();
-  sys.exit(0);
+#if (clas in [5,6,7,8]) and (page in [4,6,8,10,12,14,16,17,18,19,20]):
+#  print "End for c:%d p:4/6/8/10etc - no header: %s" % (clas,qrcode)
+#  fd = open("%s.state" % filename, "w");
+#  fd.write("ok\n");
+#  fd.close();
+#  sys.exit(0);
 
 
-if (clas <= 4):
-  grid_items_x = 7;
-elif (clas in [5,6,7,8]):
-  grid_items_x = 9;
-else:
-  print "Whoops: FIXME, need data about maxscore for class: %d" % clas;
-  sys.exit(1)
+grid_items_x = 2 + maxpt;
+
+#if (clas <= 4):
+#  grid_items_x = 7;
+#elif (clas in [5,6,7,8]):
+#  grid_items_x = 9;
+#else:
+#  print "Whoops: FIXME, need data about maxscore for class: %d" % clas;
+#  sys.exit(1)
 
 
 #SO2018-4N201013P6 - no header
@@ -1683,13 +1719,14 @@ if rotate == 180:
 avgangle = 0.0
 avgcnt = 0
 #
-hlines =  sorted(newlines[0], key=lambda x: ( -100*(abs(x[0]-x[2])+abs(x[1]-x[3]))+min(x[0],x[2]) ) );
+hlines =  sorted(newlines[0], key=lambda x: ( -100*(abs(x[0]-x[2])+abs(x[1]-x[3]))-10*min(x[0],x[2])-min(x[1],x[3]) ) );
 
 linesbylen = {};
 
 prevY = -1
 prevLen = -1
 prevX = -1
+prevY = -1
 # group by len
 for x1,y1,x2,y2 in hlines:
     phi = math.atan2(x1-x2, y1-y2)*180/np.pi;
@@ -1702,11 +1739,14 @@ for x1,y1,x2,y2 in hlines:
 
     curLen = (abs(x1-x2)+abs(y1-y2));
     curX   = min(x1,x2);
+    curY   = min(y1,y2);
 
     if (prevLen == -1):
       prevLen = curLen
     if (prevX == -1):
       prevX = curX
+    if (prevY == -1):
+      prevY = curY
     
     if (abs(prevLen-curLen)<=55): 
       #samelen
@@ -1716,8 +1756,12 @@ for x1,y1,x2,y2 in hlines:
       #sameX
       curX = prevX
 
+    if (abs(prevY-curY)<=55):
+      #sameY
+      curY = prevY
+
     #group by len and X
-    key=100*curLen+curX
+    key=1000*curLen+10*curX+curY
 
     if key in linesbylen:
       linesbylen[key].append([x1,y1,x2,y2]);
@@ -1725,6 +1769,8 @@ for x1,y1,x2,y2 in hlines:
       linesbylen[key] = [ [x1,y1,x2,y2] ];
     
     prevLen = curLen
+    prevX = curX
+    prevY = curY
 
 
 linesbylen = collections.OrderedDict(sorted(linesbylen.items(), reverse=True));
@@ -1749,7 +1795,8 @@ for x1,y1,x2,y2 in linesbylen[ longest_key ]:
 second_key = 0;
 for key in linesbylen:
   if len(linesbylen[key])<3: continue;
-  if (int(key) > second_key and int(key) < longest_key): 
+  if len(linesbylen[key])>40: continue;
+  if (int(key) > second_key and int(key) < int(longest_key*0.85)): 
     second_key = int(key);
 
 if (second_key>0):
@@ -1801,6 +1848,11 @@ leftX  = int(round(_leftX/Xc))
 rightX = int(round(_rightX/Xc))
 
 longest_len = abs(rightX-leftX);
+
+if longest_len < 0.93*im_width:
+  print "too short longest_len: %d of %d Xc:%d" % (longest_len, im_width, Xc);
+  longest_len = 0.95*im_width;
+  leftX = 0;
 
 print "left: %d, right: %d, bottomTop: %d, bottomBottom: %d, Xc: %d, longest_len: %d" % (leftX, rightX, botT, botB, Xc, longest_len)
 
@@ -1854,20 +1906,24 @@ for key in linesbylen:
 
 #fix for erased 2nd line:
 if Xc == 0:
+  print "bad top block detection: Xc=0"
+
   Xc = 1;
-  ww = (rightX - leftX); #1459
+  ww = longest_len #1459
 
   topL = leftX
   topR = leftX + int(ww * 0.7)
   
-  topB = (botT - 0.145*ww)*2.0;
+  topB = ww*0.6
+
+#  topB = (botT - 0.145*ww)*2.0;
 
 topL = max( topL-2, 0);
 topR = topR+2;
 
 ww = (topR-topL)
 
-topB = int(round( topB / 2.0 / Xc * 1.08));
+topB = int(round( topB / 2.0 / Xc * 1.07));
 topT = max( 0, int(topB - ww*0.35)) #0.38
 
 

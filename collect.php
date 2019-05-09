@@ -12,7 +12,7 @@ $cnts = [];
 while ($row = readdir($fd)) {
   if ($row[0] == '.') continue; //special files
   
-  if (preg_match("/^(img-[YZ][0-9]+|Scan.*)(-4кл)?[-]([0-9]+)[.]png[.]?(hlines|state|qrdata|score)?$/i",$row,$regs)) {
+  if (preg_match("/^(img-[YZ0-9][0-9]+|Scan.*)(-4кл)?[-]([0-9]+)[.]png[.]?(hlines|state|qrdata|score)?$/i",$row,$regs)) {
     $pdfname = $regs[1].$regs[2].'-'.$regs[3];
     $suffix = @$regs[4];
     if (!empty($suffix)) {
@@ -33,7 +33,7 @@ print_r($cnts);
 
 foreach($imgs as $imgname => $info) {
   $info['taskno'] = '';
-  if (preg_match("/(img-[YZ][0-9]+|Scan.*)(-4кл)?[-]([0-9]+)$/i",$imgname,$regs)) {
+  if (preg_match("/(img-[YZ0-9][0-9]+|Scan.*)(-4кл)?[-]([0-9]+)$/i",$imgname,$regs)) {
     $info['pdfname'] = $regs[1].$regs[2];
     $info['page'] = intval($regs[3])+1;
     $info['imgname'] = $imgname;
@@ -54,24 +54,29 @@ foreach($imgs as $imgname => $info) {
     if (isset($qrdata[1])) $info['rotate'] = intval($qrdata[1]);
     else $info['rotate']=0;
     
-    if (preg_match("/^R[0-9][0-9][0-9][0-9][0-9][0-9]8$/",$info['qrdata'])) {
+    if (preg_match("/^R[0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/",$info['qrdata'])) {
       $info['state'] = 'regpage';
     }
-    if (preg_match("/^AO2018-([0-9])N([0-9][0-9][0-9][0-9])CS([0-9][0-9])P([0-9]+)(.*)$/",$info['qrdata'],$xr)) {
+
+    if (preg_match('/^SO-2019-G:[0-5]-N:[0-9][0-9][0-9][0-9]-Cs:[0-9][0-9]-Pg:1-RC:[A-Z][A-Z]-Title$/', $info['qrdata'])) {
+      $info['state'] = 'firstpage';
+    } elseif (preg_match('/^SO-2019-G:[0-5]-N:[0-9][0-9][0-9][0-9]-Cs:[0-9][0-9]-Pg:17-RC:[A-Z][A-Z]-Dop$/', $info['qrdata'])) {
+      $info['state'] = 'extrapage';
+    } elseif (preg_match("/^SO-2019-G:([0-9])-N:([0-9][0-9][0-9][0-9])-Cs:([0-9][0-9])-Pg:([0-9]+)-RC:[A-Z][A-Z]-Pr:([0-9])-MxPt:([0-9])-Problem(.*)$/",$info['qrdata'],$xr)) {
       $lvl = intval($xr[1]);
       $pg  = intval($xr[4]);
+      $taskno = intval($xr[5]);
+      $maxscore = intval($xr[6]);
       
 //      echo("lvl: $lvl pg: $pg\n");
-      
+/*      
       if ($pg == 1) {
         $info['state'] = 'firstpage';
-      /* }  elseif ( ($lvl == 5) && (in_array($pg, [ 6,8,10,12,14 ]) !== false )) {
-        $info['state'] = 'no-score'; */
       } elseif ( ($lvl == 4) && (in_array($pg, [ 9 ]) !== false )) {
         $info['state'] = 'no-score';
       } elseif ( ($lvl == 3) && (in_array($pg, [ 9 ]) !== false )) {
         $info['state'] = 'no-score';
-      } elseif ( ($lvl==5 || $lvl == 6 || $lvl == 8) && (in_array($pg, [ 4,6,8,10,12,14,16,17,18,19,20 ]) !== false )) {
+      } elseif ( ($lvl==5 || $lvl == 6 || $lvl==7 || $lvl == 8) && (in_array($pg, [ 4,6,8,10,12,14,16,17,18,19,20 ]) !== false )) {
         $info['state'] = 'no-score';
       }
       // lvl=3 we have no data for now
@@ -169,6 +174,7 @@ foreach($imgs as $imgname => $info) {
           case 15: $taskno = 7; break;
         }
       }
+*/
       $info['taskno'] = $taskno;      
     }
 
@@ -201,7 +207,7 @@ foreach($imgs as $imgname => $info) {
       $info['score_3'] = '?';
       $info['score_4'] = '?';
     }
-  } elseif ($info['state'] == 'regpage' || $info['state'] == 'firstpage' || $info['state'] == 'no-score' || $info['state'] == 'empty nohlines') {
+  } elseif ($info['state'] == 'regpage' || $info['state'] == 'firstpage' || $info['state'] == 'no-score' || $info['state'] == 'extrapage' || $info['state'] == 'empty nohlines') {
     $info['score_1'] = '';
     $info['score_2'] = '';
     $info['score_3'] = '';
@@ -262,7 +268,7 @@ foreach($imgs as $imgname => $info) {
 fclose ($fd);
 
 
-$fd = fopen("oo2018-kirill.csv","r");
+$fd = fopen("kirill-vo19.csv","r");
 if (!$fd) die("> Could not open mapping file\n");
 //fgets($fd);
 
@@ -283,24 +289,12 @@ while ($row = fgetcsv($fd, 4096)) {
 }
 fclose($fd);
 
-/*
-add_student([
-  'fio' => 'Самуйленко Дмитрий Георгиевич',
-  'regid' => 367,
-  'level' => 1,
-  'room'  => 122,
-  'protocol' => 20,
-  'ts'       => 'Sat Oct 20 2018 10:32:36 GMT+0300 (MSK)',
-  'bcode'    => 1143364,
-]);
-*/
-
 echo("kdata: ".count($students).", b2r: ".count($bcode2rc)." rc2bcode: ".count($rc2bcode)."\n");
 
 $works = [];
 foreach($imgs as $info) {
   if (!empty($info['qrdata'])) {
-    if (preg_match("/^R([0-9])([0-9][0-9][0-9][0-9])([0-9])8$/",$info['qrdata'],$regs)) {
+    if (preg_match('/^R([0-9])([0-9]+)([0-9])$/i',$info['qrdata'],$regs)) {
       //regpage
       $rc = intval($regs[2]);
 
@@ -309,8 +303,8 @@ foreach($imgs as $info) {
       }      
       $students[$rc]['reglist'][] = $info['pdfname'].'_p'.$info['page'];
       continue;
-    }
-    if (preg_match("/^AO2018-([0-9])N([0-9][0-9][0-9][0-9])CS([0-9][0-9])P([0-9]+)(.*)$/",$info['qrdata'],$xr)) {
+
+    } elseif (preg_match("/^SO-2019-G:([0-9])-N:([0-9][0-9][0-9][0-9])-Cs:([0-9][0-9])-Pg:([0-9]+)-RC:[A-Z][A-Z]-Pr:([0-9])-MxPt:([0-9])-Problem(.*)$/",$info['qrdata'],$xr)) {
       $bcode = intval($xr[1])*1000000 + intval($xr[2])*100 + intval($xr[3]);
       $page = intval($xr[4]);
       
@@ -344,6 +338,7 @@ echo("works: ".count($works)."\n");
 $cnt = [];
 foreach($works as $bcode => $work) {
   $have_2checks = 0;
+  $have_1check = 0;
   $have_missing = 0;
   for($i=1;$i<=7;$i++) {
     $checks = 0;
@@ -358,6 +353,7 @@ foreach($works as $bcode => $work) {
       $row[] = $v;
     }
     if ($checks >= 2) $have_2checks++;
+    if ($checks >= 1) $have_1check++;
     if ($missing > 0) $have_missing++;
   }
 
@@ -368,13 +364,16 @@ foreach($works as $bcode => $work) {
 
   if ($have_2checks == $total_tasks) {
     $re = 'complete';
+  } elseif (($work['lvl'] > 6) && ($have_1check == $total_tasks)) {
+    $re = 'complete_1check';
   } elseif ($have_missing == $total_tasks){
     $re = 'empty';
     echo("empty: ");print_r($work);
   } else if ($have_missing) {
     $re = 'missing tasks';
   } else {
-    $re = 'no 2 checks';
+    $re = 'incomplete checks';
+//    print_r($works[$bcode]);
   }
   
   $works[$bcode]['status'] = $re;
@@ -465,7 +464,7 @@ fclose ($fd);
 
 function get_pdfts($pdfname) {
   //y d h m s
-  if (preg_match("/^img-([XYZ])([0-9]?[0-9])([0-3][0-9])([0-9][0-9])([0-9][0-9])(-4кл)?$/",$pdfname, $regs)) {
+  if (preg_match("/^img-([XYZ0-9])([0-9]?[0-9])([0-3][0-9])([0-9][0-9])([0-9][0-9])(-4кл)?$/",$pdfname, $regs)) {
     switch($regs[1]) {
       case 'Y':  $month = 11;
                  $year  = 2018;
@@ -473,6 +472,17 @@ function get_pdfts($pdfname) {
       case 'Z':  $month = 12;
                  $year  = 2018;
                  break;
+
+      case '4':  $month = 4;
+                 $year  = 2019;
+                 break;
+      case '5':  $month = 5;
+                 $year  = 2019;
+                 break;
+      case '6':  $month = 6;
+                 $year  = 2019;
+                 break;
+                 
       default:
                  print_r("pdfts: could not parse pdfname: ".$pdfname."\n");
                  return 0;
